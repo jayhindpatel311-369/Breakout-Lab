@@ -1,0 +1,10 @@
+# Breakout Lab — PC install
+streamlit>=1.32
+pandas>=2.0
+numpy>=1.24
+plotly>=5.18
+yfinance>=0.2.40
+openpyxl>=3.1
+requests>=2.31
+# optional (Cloud browser journal only — PC journal is on disk)
+# streamlit-local-storage>=0.0.13
