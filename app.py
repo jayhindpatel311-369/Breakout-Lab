@@ -9,6 +9,7 @@ Run with:  streamlit run app.py
 
 from __future__ import annotations
 
+import html as html_mod
 import io
 import json
 import os
@@ -16,6 +17,11 @@ import zipfile
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 import calendar as calmod
+try:
+    from zoneinfo import ZoneInfo
+    _IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    _IST = None
 
 import numpy as np
 import pandas as pd
@@ -65,6 +71,12 @@ from core import storage as sg
 import core.gvault as gv
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _now_ist() -> datetime:
+    if _IST is not None:
+        return datetime.now(_IST)
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 
 # Where the journal and the parameter sets live is a setting, not a constant —
@@ -173,8 +185,8 @@ def inject_css(dark: bool) -> None:
         <style>
         html, body, [class*="css"] { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
         .stApp { background: #f3f5f8; color: #111827; }
-        .block-container { padding-top: 1.2rem; padding-bottom: 3.2rem; max-width: 1440px; }
-        header[data-testid="stHeader"] { background: #f3f5f8; }
+        .block-container { padding-top: 4.8rem !important; padding-bottom: 3.2rem; max-width: 1440px; }
+        header[data-testid="stHeader"] { background: transparent !important; }
 
         section[data-testid="stSidebar"] {
             background: #ffffff !important;
@@ -384,6 +396,8 @@ def inject_css(dark: bool) -> None:
         .saas-sym { font-weight:700; letter-spacing:-.02em; line-height:1.2; }
         .saas-sub { font-size:12px; color:#9ca3af; margin-top:2px; }
         .saas-next { font-size:12px; color:#4b5563; max-width:160px; line-height:1.35; }
+        .m-lab { display: none; }
+        .m-val { display: inline; }
         .badge { display:inline-block; padding:3px 9px; border-radius:999px;
                  font-size:11px; font-weight:700; letter-spacing:.04em; }
         .badge-buy { background:#ecfdf5; color:#047857; }
@@ -437,7 +451,7 @@ def inject_css(dark: bool) -> None:
         /* —— tablet / landscape phone —— */
         @media (max-width: 900px) {
             .block-container {
-                padding-top: 0.8rem !important;
+                padding-top: 4.2rem !important;
                 padding-left: max(0.8rem, env(safe-area-inset-left)) !important;
                 padding-right: max(0.8rem, env(safe-area-inset-right)) !important;
                 padding-bottom: max(3.5rem, env(safe-area-inset-bottom)) !important;
@@ -471,7 +485,7 @@ def inject_css(dark: bool) -> None:
         /* —— phone portrait —— */
         @media (max-width: 640px) {
             .block-container {
-                padding: 0.55rem 0.65rem 5.5rem !important;
+                padding: 4.2rem 0.65rem 5.5rem !important;
                 padding-bottom: max(5.5rem, env(safe-area-inset-bottom)) !important;
                 max-width: 100% !important;
             }
@@ -509,6 +523,9 @@ def inject_css(dark: bool) -> None:
                 min-height: 44px !important;
                 width: 100% !important;
                 font-size: 15px !important;
+                white-space: normal !important;
+                height: auto !important;
+                line-height: 1.3 !important;
             }
             .stNumberInput input, .stTextInput input, .stDateInput input,
             .stSelectbox [data-baseweb="select"] > div, textarea {
@@ -520,13 +537,30 @@ def inject_css(dark: bool) -> None:
                 display: flex !important; align-items: center;
             }
             div[data-testid="stHorizontalBlock"] {
+                flex-direction: column !important;
                 flex-wrap: wrap !important;
                 gap: 8px !important;
             }
-            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            div[data-testid="stHorizontalBlock"] > div,
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+            div[data-testid="column"],
+            [data-testid="stColumn"] {
                 width: 100% !important;
                 min-width: 0 !important;
-                flex: 1 1 100% !important;
+                max-width: 100% !important;
+                flex: 1 1 auto !important;
+            }
+            .app-sub { display: none; }
+            section[data-testid="stSidebar"] {
+                position: fixed !important;
+                z-index: 1000001 !important;
+                min-width: min(88vw, 380px) !important;
+                max-width: min(88vw, 380px) !important;
+            }
+            section.main, [data-testid="stAppViewContainer"] > .main,
+            .stApp [data-testid="stMain"] {
+                margin-left: 0 !important;
+                width: 100% !important;
             }
             div[data-testid="stVerticalBlockBorderWrapper"] {
                 padding: 8px 10px 12px !important;
@@ -566,19 +600,24 @@ def inject_css(dark: bool) -> None:
                 white-space: normal !important;
             }
             .saas-table td:last-child, .ptable td:last-child { border-bottom: none !important; }
-            .saas-table td::before, .ptable td::before {
-                content: attr(data-label);
+            .saas-table td::before, .ptable td::before { display: none !important; content: none !important; }
+            .m-lab {
+                display: inline !important;
                 font-size: 11px;
                 font-weight: 700;
                 letter-spacing: .06em;
                 text-transform: uppercase;
                 color: #9ca3af;
                 text-align: left;
-                flex: 0 0 38%;
+                flex: 0 0 42%;
+                padding-top: 2px;
             }
+            .m-val { display: block; text-align: right; flex: 1; min-width: 0; }
             .saas-table td:first-child, .ptable td:first-child {
                 position: static; background: transparent;
             }
+            .saas-table td:first-child .m-lab { display: none !important; }
+            .saas-table td:first-child .m-val { text-align: left; }
             .saas-table tfoot td {
                 justify-content: flex-start;
                 text-align: left !important;
@@ -646,13 +685,14 @@ def rupees(v: float) -> str:
 
 
 def _esc(s) -> str:
-    t = "" if s is None else str(s)
-    return t.replace("&", "&").replace("<", "<").replace(">", ">")
+    return html_mod.escape("" if s is None else str(s), quote=True)
 
 
 def _td(label: str, inner: str, cls: str = "") -> str:
     extra = f' class="{cls}"' if cls else ""
-    return f'<td{extra} data-label="{_esc(label)}">{inner}</td>'
+    return (f'<td{extra} data-label="{_esc(label)}">'
+            f'<span class="m-lab">{_esc(label)}</span>'
+            f'<span class="m-val">{inner}</span></td>')
 
 
 _AVATAR = ["#2563eb", "#7c3aed", "#0891b2", "#059669", "#d97706",
@@ -1275,28 +1315,30 @@ def sidebar() -> dict:
             '<div class="sb-sub">Weekly NSE breakouts</div></div></div>',
             unsafe_allow_html=True,
         )
-        try:
-            with open(os.path.join(APP_DIR, "app.py"), "rb") as _af:
-                st.download_button(
-                    "Download app.py",
-                    _af.read(),
-                    file_name="app.py",
-                    mime="text/plain",
-                    key="dl_app_py",
-                )
-        except OSError:
-            pass
-        _pc_zip = os.path.join(APP_DIR, "BreakoutLab-PC.zip")
-        if os.path.isfile(_pc_zip):
-            with open(_pc_zip, "rb") as _zf:
-                st.download_button(
-                    "Download PC zip",
-                    _zf.read(),
-                    file_name="breakout_lab_ui_update.zip",
-                    mime="application/zip",
-                    key="pc_zip_sidebar",
-                    help="Extract → run.bat",
-                )
+        _on_cloud = os.path.isdir("/mount/src")
+        if not _on_cloud:
+            try:
+                with open(os.path.join(APP_DIR, "app.py"), "rb") as _af:
+                    st.download_button(
+                        "Download app.py",
+                        _af.read(),
+                        file_name="app.py",
+                        mime="text/plain",
+                        key="dl_app_py",
+                    )
+            except OSError:
+                pass
+            _pc_zip = os.path.join(APP_DIR, "BreakoutLab-PC.zip")
+            if os.path.isfile(_pc_zip):
+                with open(_pc_zip, "rb") as _zf:
+                    st.download_button(
+                        "Download PC zip",
+                        _zf.read(),
+                        file_name="breakout_lab_ui_update.zip",
+                        mime="application/zip",
+                        key="pc_zip_sidebar",
+                        help="Extract → run.bat",
+                    )
         params_ui()
         data_folder_ui()
         s["dark"] = False
@@ -3401,7 +3443,7 @@ def tab_positions(s: dict) -> None:
         if len(live):
             for sym, px in live.items():
                 last_px[sym] = float(px)
-            live_asof = datetime.now().strftime("%d %b %Y %H:%M")
+            live_asof = _now_ist().strftime("%d %b %Y %H:%M")
     st.session_state["_last_px"] = last_px
     ef = sig.ema_fast.loc[week] if week in sig.ema_fast.index else pd.Series(dtype=float)
     es = sig.ema_slow.loc[week] if week in sig.ema_slow.index else pd.Series(dtype=float)
@@ -3571,7 +3613,16 @@ def tab_journal(s: dict) -> None:
                        "realised P&L, win rate, profit factor and the exit breakdown."):
         names = sorted({p.symbol for p in book.positions + book.closed})
         ctx = build_context(s, for_live=True, restrict_to=names)
-        close = ctx["panel"]["Close"]
+        close = ctx["panel"]["Close"].copy()
+        if not s.get("demo") and names:
+            live = data_mod.live_last_prices(
+                [p.symbol for p in book.positions if p.is_open()]
+            )
+            if len(live):
+                last = close.iloc[-1].copy()
+                for sym, px in live.items():
+                    last[sym] = float(px)
+                close.iloc[-1] = last
 
     st_ = js.stats(book, close)
     rb = js.exit_reasons(book)
@@ -3580,7 +3631,7 @@ def tab_journal(s: dict) -> None:
 
     tiles_row([
         ("Net P&L", rupees(st_["Net P&L"]),
-         f"realised {rupees(st_['Realised P&L'])}"
+         f"realised {rupees(st_['Realised P&L'])} · unrealised {rupees(st_['Unrealised P&L'])}"
          + (f" · dividends {rupees(st_['Dividends'])}" if st_.get("Dividends") else ""),
          tone_of(st_["Net P&L"])),
         ("Overall ROI", f"{st_['ROI %']:,.1f}%" if np.isfinite(st_["ROI %"]) else "—",
@@ -3594,7 +3645,8 @@ def tab_journal(s: dict) -> None:
          "gross win / gross loss", ""),
         ("Max drawdown",
          f"{st_['Max drawdown %']:,.1f}%" if np.isfinite(st_["Max drawdown %"]) else "—",
-         "needs prices" if not np.isfinite(st_["Max drawdown %"]) else "", "neg"),
+         "peak-to-trough of daily equity (cash+MTM)" if np.isfinite(st_["Max drawdown %"])
+         else "needs prices", "neg"),
     ])
 
     age = st_.get("Book age (years)", np.nan)
