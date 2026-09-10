@@ -1216,7 +1216,7 @@ def data_folder_ui() -> None:
             key="_vault_url_box",
             placeholder="https://script.google.com/macros/s/…/exec",
         )
-               vc1, vc2 = st.columns(2)
+        vc1, vc2 = st.columns(2)
         if vc1.button("Push book to Drive", type="primary", key="_vault_push"):
             gv.set_vault_url(APP_DIR, vault_in)
             book = current_book()
@@ -1229,8 +1229,14 @@ def data_folder_ui() -> None:
                     blob = json.loads(_book_json_bytes(book).decode("utf-8"))
                     gv.push_book(vault_in.strip(), blob)
                     st.session_state["_vault_ok"] = True
-                    st.success("Drive pe likh diya. Ab tab band kar sakte ho.")
+                    st.session_state["_vault_err"] = ""
+                    st.success(
+                        f"Drive pe likh diya: {book.name} · "
+                        f"{sum(1 for p in book.positions if p.is_open())} open · "
+                        f"{len(book.ledger)} fills. Ab tab band kar sakte ho."
+                    )
                 except Exception as exc:
+                    st.session_state["_vault_ok"] = False
                     st.error(f"Push fail: {exc}")
         if vc2.button("Pull from Drive", key="_vault_save"):
             gv.set_vault_url(APP_DIR, vault_in)
@@ -1238,10 +1244,22 @@ def data_folder_ui() -> None:
             try:
                 books = gv.pull_all(vault_in.strip()) if vault_in.strip() else {}
                 n = gv.write_pulled(JOURNAL_DIR(), books) if books else 0
-                st.success(f"Vault saved. {n} book(s) Drive se aaye.")
+                st.session_state["_vault_ok"] = True
+                st.session_state["_vault_err"] = ""
+                st.success(f"Vault saved. {n} book(s) Drive se aaye."
+                           if vault_in.strip() else "Vault URL cleared.")
+                if n:
+                    st.session_state.pop("book_path", None)
+                    st.session_state.pop("_book", None)
+                    st.session_state.pop("_book_cache_path", None)
                 st.rerun()
             except Exception as exc:
+                st.session_state["_vault_ok"] = False
                 st.error(f"Drive se pull nahi hua: {exc}")
+        if st.session_state.get("_vault_ok"):
+            st.caption("Google vault connected.")
+        elif st.session_state.get("_vault_err"):
+            st.caption(f"Vault last error: {st.session_state['_vault_err']}")
 
 
 # --------------------------------------------------------------------------- #
@@ -1257,6 +1275,28 @@ def sidebar() -> dict:
             '<div class="sb-sub">Weekly NSE breakouts</div></div></div>',
             unsafe_allow_html=True,
         )
+        try:
+            with open(os.path.join(APP_DIR, "app.py"), "rb") as _af:
+                st.download_button(
+                    "Download app.py",
+                    _af.read(),
+                    file_name="app.py",
+                    mime="text/plain",
+                    key="dl_app_py",
+                )
+        except OSError:
+            pass
+        _pc_zip = os.path.join(APP_DIR, "BreakoutLab-PC.zip")
+        if os.path.isfile(_pc_zip):
+            with open(_pc_zip, "rb") as _zf:
+                st.download_button(
+                    "Download PC zip",
+                    _zf.read(),
+                    file_name="breakout_lab_ui_update.zip",
+                    mime="application/zip",
+                    key="pc_zip_sidebar",
+                    help="Extract → run.bat",
+                )
         params_ui()
         data_folder_ui()
         s["dark"] = False
@@ -1900,6 +1940,10 @@ def hydrate_books_from_browser() -> None:
     st.session_state["_ls_hydrated"] = True
     url = gv.vault_url(APP_DIR)
     if not url:
+        return
+    if not sg.load_settings(APP_DIR).get("vault_url"):
+        gv.set_vault_url(APP_DIR, url)
+    if jn.list_books(JOURNAL_DIR()):
         return
     try:
         books = gv.pull_all(url)
