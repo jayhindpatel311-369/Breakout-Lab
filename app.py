@@ -1216,25 +1216,32 @@ def data_folder_ui() -> None:
             key="_vault_url_box",
             placeholder="https://script.google.com/macros/s/…/exec",
         )
-        vc1, _vc2 = st.columns(2)
-        if vc1.button("Save & pull from Drive", key="_vault_save"):
+               vc1, vc2 = st.columns(2)
+        if vc1.button("Push book to Drive", type="primary", key="_vault_push"):
+            gv.set_vault_url(APP_DIR, vault_in)
+            book = current_book()
+            if not vault_in.strip():
+                st.error("Pehle vault URL paste karo.")
+            elif book is None:
+                st.error("Koi book open nahi — pehle Import karo.")
+            else:
+                try:
+                    blob = json.loads(_book_json_bytes(book).decode("utf-8"))
+                    gv.push_book(vault_in.strip(), blob)
+                    st.session_state["_vault_ok"] = True
+                    st.success("Drive pe likh diya. Ab tab band kar sakte ho.")
+                except Exception as exc:
+                    st.error(f"Push fail: {exc}")
+        if vc2.button("Pull from Drive", key="_vault_save"):
             gv.set_vault_url(APP_DIR, vault_in)
             st.session_state.pop("_ls_hydrated", None)
             try:
                 books = gv.pull_all(vault_in.strip()) if vault_in.strip() else {}
                 n = gv.write_pulled(JOURNAL_DIR(), books) if books else 0
-                st.session_state["_vault_ok"] = True
-                st.session_state["_vault_err"] = ""
-                st.success(f"Vault saved. {n} book(s) Drive se aaye."
-                           if vault_in.strip() else "Vault URL cleared.")
+                st.success(f"Vault saved. {n} book(s) Drive se aaye.")
                 st.rerun()
             except Exception as exc:
-                st.session_state["_vault_ok"] = False
                 st.error(f"Drive se pull nahi hua: {exc}")
-        if st.session_state.get("_vault_ok"):
-            st.caption("Google vault connected.")
-        elif st.session_state.get("_vault_err"):
-            st.caption(f"Vault last error: {st.session_state['_vault_err']}")
 
 
 # --------------------------------------------------------------------------- #
