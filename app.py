@@ -418,6 +418,30 @@ def inject_css(dark: bool) -> None:
         .hold-compact td.next { font-size: 11px; color: #4b5563; white-space: normal; max-width: 120px; }
         .hold-compact .saas-av { width: 24px; height: 24px; min-width: 24px; font-size: 11px; }
         .hold-compact tfoot td { font-size: 12px; color: #4b5563; border-bottom: none; padding-top: 10px; }
+        @media (max-width: 768px) {
+            header[data-testid="stHeader"],
+            div[data-testid="stToolbar"],
+            #MainMenu, footer, .stDeployButton { display: none !important; }
+            [data-testid="stAppViewContainer"] { display: block !important; }
+            section[data-testid="stSidebar"] {
+                position: fixed !important;
+                top: 0 !important; left: 0 !important;
+                height: 100% !important;
+                width: min(86vw, 340px) !important;
+                min-width: 0 !important;
+                z-index: 1000001 !important;
+                transform: none;
+            }
+            [data-testid="stMain"], section.main,
+            [data-testid="stAppViewContainer"] > .main {
+                margin-left: 0 !important;
+                width: 100% !important;
+                max-width: 100vw !important;
+            }
+            .hold-compact .saas-sub { display: none; }
+            .hold-compact .saas-sym { font-size: 12px; }
+            .block-container { padding-top: 0.8rem !important; }
+        }
         .hold-card {
             background: #fff; border: 1px solid #e8eaee; border-radius: 16px;
             padding: 14px 14px 8px; box-shadow: 0 1px 2px rgba(17,24,39,.04);
