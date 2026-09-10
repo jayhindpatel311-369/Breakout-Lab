@@ -419,8 +419,7 @@ def inject_css(dark: bool) -> None:
         .hold-compact .saas-av { width: 24px; height: 24px; min-width: 24px; font-size: 11px; }
         .hold-compact tfoot td { font-size: 12px; color: #4b5563; border-bottom: none; padding-top: 10px; }
         @media (max-width: 768px) {
-            div[data-testid="stToolbar"],
-            #MainMenu, .stDeployButton { display: none !important; }
+            #MainMenu, .stDeployButton, [data-testid="stAppDeployButton"] { display: none !important; }
             [data-testid="stMain"], section.main,
             [data-testid="stAppViewContainer"] > .main {
                 margin-left: 0 !important;
@@ -429,10 +428,25 @@ def inject_css(dark: bool) -> None:
             }
             .hold-compact .saas-sub { display: none; }
             .hold-compact .saas-sym { font-size: 12px; }
-            [data-testid="stSidebarCollapsedControl"] {
+            header[data-testid="stHeader"] {
+                display: block !important;
+                background: transparent !important;
+            }
+            [data-testid="stSidebarCollapsedControl"],
+            [data-testid="collapsedControl"] {
                 display: flex !important;
                 visibility: visible !important;
-                z-index: 1000002 !important;
+                opacity: 1 !important;
+                position: fixed !important;
+                top: 10px !important;
+                left: 10px !important;
+                z-index: 2147483646 !important;
+                width: 44px !important;
+                height: 44px !important;
+                background: #fff !important;
+                border: 1px solid #e5e7eb !important;
+                border-radius: 10px !important;
+                box-shadow: 0 1px 3px rgba(17,24,39,.12) !important;
             }
         }
         .hold-card {
