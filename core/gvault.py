@@ -15,7 +15,17 @@ from . import storage as sg
 
 
 def vault_url(app_dir: str) -> str:
-    return str(sg.load_settings(app_dir).get("vault_url") or "").strip()
+    u = str(sg.load_settings(app_dir).get("vault_url") or "").strip()
+    if u:
+        return u
+    try:
+        import streamlit as st
+        u = str(st.secrets.get("VAULT_URL") or st.secrets.get("vault_url") or "").strip()
+        if u:
+            return u
+    except Exception:
+        pass
+    return str(os.environ.get("VAULT_URL") or "").strip()
 
 
 def set_vault_url(app_dir: str, url: str) -> None:
