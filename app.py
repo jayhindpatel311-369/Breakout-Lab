@@ -91,7 +91,7 @@ def PARAMS_DIR() -> str:                                       # noqa: N802
     return sg.params_dir(APP_DIR)
 
 st.set_page_config(page_title="Breakout Lab", page_icon="📈", layout="wide",
-                   initial_sidebar_state="auto")
+                   initial_sidebar_state="collapsed")
 
 # --- Streamlit version compat ---------------------------------------------- #
 try:
@@ -398,6 +398,26 @@ def inject_css(dark: bool) -> None:
         .saas-next { font-size:12px; color:#4b5563; max-width:160px; line-height:1.35; }
         .m-lab { display: none; }
         .m-val { display: inline; }
+        .hold-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
+        @media (min-width: 900px) {
+            .hold-list { grid-template-columns: 1fr 1fr; }
+        }
+        .hold-card {
+            background: #fff; border: 1px solid #e8eaee; border-radius: 16px;
+            padding: 14px 14px 8px; box-shadow: 0 1px 2px rgba(17,24,39,.04);
+        }
+        .hold-head { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #f3f4f6; }
+        .hold-kvs { display: flex; flex-direction: column; }
+        .kv { display: flex; justify-content: space-between; align-items: flex-start;
+              gap: 10px; padding: 7px 0; border-bottom: 1px solid #f3f4f6; }
+        .kv:last-child { border-bottom: none; }
+        .kv span { font-size: 11px; font-weight: 700; letter-spacing: .06em;
+                   text-transform: uppercase; color: #9ca3af; flex: 0 0 42%; padding-top: 2px; }
+        .kv b { font-weight: 650; text-align: right; flex: 1; font-size: 14px; color: #111827; }
+        .kv.pos b { color: #047857; }
+        .kv.neg b { color: #b91c1c; }
+        .hold-foot { grid-column: 1 / -1; font-size: 13px; color: #4b5563;
+                     padding: 8px 4px 0; }
         .badge { display:inline-block; padding:3px 9px; border-radius:999px;
                  font-size:11px; font-weight:700; letter-spacing:.04em; }
         .badge-buy { background:#ecfdf5; color:#047857; }
@@ -474,6 +494,25 @@ def inject_css(dark: bool) -> None:
             .ptable th:first-child, .ptable td:first-child,
             .saas-table th:first-child, .saas-table td:first-child {
                 position: sticky; left: 0; background: #fff; z-index: 1;
+            }
+            [data-testid="stAppViewContainer"] { display: block !important; }
+            section[data-testid="stSidebar"] {
+                position: fixed !important; z-index: 1000001 !important;
+                height: 100% !important;
+            }
+            section.main, [data-testid="stMain"],
+            [data-testid="stAppViewContainer"] > .main {
+                width: 100% !important; max-width: 100% !important;
+                margin-left: 0 !important;
+            }
+            div[data-testid="stHorizontalBlock"] {
+                flex-direction: column !important;
+                flex-wrap: wrap !important;
+            }
+            div[data-testid="stHorizontalBlock"] > div,
+            [data-testid="stColumn"] {
+                width: 100% !important; max-width: 100% !important;
+                flex: 1 1 auto !important;
             }
             .js-plotly-plot, .plotly-graph-div { max-width: 100% !important; }
             [data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto; }
@@ -784,19 +823,19 @@ def saas_hold_html(df: pd.DataFrame, capital: float | None = None,
         if risk_note:
             risk_s += f'<div class="saas-sub">{risk_note}</div>'
         rows.append(
-            "<tr>"
-            + _td("Stock", stock)
-            + _td("Entry", when)
-            + _td("Qty", str(int(qty)), "num")
-            + _td("Avg price", _px(r.get("entry_price")), "num")
-            + _td("CMP", _px(cmp_), "num")
-            + _td("Stop", _px(stop), "num")
-            + _td("Value", rupees(r.get("open_value")), "num")
-            + _td("Unrealised", _signed_rupees(pnl), f"num {_tone_cls(pnl)}")
-            + _td("P&L %", pct_s, f"num {_tone_cls(pct)}")
-            + _td("Open risk", risk_s, "num")
-            + _td("Next", f'<div class="saas-next">{_esc(nxt)}</div>')
-            + "</tr>"
+            f'<article class="hold-card"><div class="hold-head">{stock}</div>'
+            f'<div class="hold-kvs">'
+            f'<div class="kv"><span>Entry</span><b>{when}</b></div>'
+            f'<div class="kv"><span>Qty</span><b>{int(qty)}</b></div>'
+            f'<div class="kv"><span>Avg price</span><b>{_px(r.get("entry_price"))}</b></div>'
+            f'<div class="kv"><span>CMP</span><b>{_px(cmp_)}</b></div>'
+            f'<div class="kv"><span>Stop</span><b>{_px(stop)}</b></div>'
+            f'<div class="kv"><span>Value</span><b>{rupees(r.get("open_value"))}</b></div>'
+            f'<div class="kv {_tone_cls(pnl)}"><span>Unrealised</span><b>{_signed_rupees(pnl)}</b></div>'
+            f'<div class="kv {_tone_cls(pct)}"><span>P&L %</span><b>{pct_s or "—"}</b></div>'
+            f'<div class="kv"><span>Open risk</span><b>{risk_s}</b></div>'
+            f'<div class="kv"><span>Next</span><b>{_esc(nxt)}</b></div>'
+            f'</div></article>'
         )
     tot = (float(risk_total) if risk_total is not None
            else float(pd.to_numeric(df["open_risk"], errors="coerce").fillna(0).sum())
@@ -804,10 +843,8 @@ def saas_hold_html(df: pd.DataFrame, capital: float | None = None,
     cap_bit = ""
     if capital and float(capital) > 0:
         cap_bit = f" · {tot / float(capital) * 100:,.2f}% of capital ({rupees(capital)})"
-    foot = (f'<tfoot><tr><td colspan="{len(heads)}" class="num">'
-            f'<b>Open Risk total {rupees(tot)}</b>{cap_bit}</td></tr></tfoot>')
-    return (f'<div class="saas-wrap"><table class="saas-table"><thead><tr>{th}</tr></thead>'
-            f'<tbody>{"".join(rows)}</tbody>{foot}</table></div>')
+    foot = f'<div class="hold-foot"><b>Open Risk total {rupees(tot)}</b>{cap_bit}</div>'
+    return f'<div class="hold-list">{"".join(rows)}{foot}</div>'
 
 
 def saas_fills_html(df: pd.DataFrame) -> str:
@@ -4042,17 +4079,14 @@ def main() -> None:
     s = sidebar()
     inject_css(s["dark"])
 
-    c1, c2 = st.columns([5, 1.5])
-    with c1:
-        st.markdown(
-            '<div class="app-top"><div><div class="app-name">Breakout Lab</div>'
-            '<div class="app-sub">Weekly N-week-high breakouts on NSE · tiered booking · EMA trail · journal</div>'
-            '</div></div>',
-            unsafe_allow_html=True,
-        )
-    with c2:
-        with st.popover("Backup / Import"):
-            book_tools_ui(current_book(), "hdr")
+    st.markdown(
+        '<div class="app-top"><div><div class="app-name">Breakout Lab</div>'
+        '<div class="app-sub">Weekly N-week-high breakouts on NSE · tiered booking · EMA trail · journal</div>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+    with st.popover("Backup / Import"):
+        book_tools_ui(current_book(), "hdr")
 
     if s["demo"]:
         st.warning("**Demo mode is on.** Prices are synthetic. Nothing here means anything "
