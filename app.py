@@ -419,19 +419,8 @@ def inject_css(dark: bool) -> None:
         .hold-compact .saas-av { width: 24px; height: 24px; min-width: 24px; font-size: 11px; }
         .hold-compact tfoot td { font-size: 12px; color: #4b5563; border-bottom: none; padding-top: 10px; }
         @media (max-width: 768px) {
-            header[data-testid="stHeader"],
             div[data-testid="stToolbar"],
-            #MainMenu, footer, .stDeployButton { display: none !important; }
-            [data-testid="stAppViewContainer"] { display: block !important; }
-            section[data-testid="stSidebar"] {
-                position: fixed !important;
-                top: 0 !important; left: 0 !important;
-                height: 100% !important;
-                width: min(86vw, 340px) !important;
-                min-width: 0 !important;
-                z-index: 1000001 !important;
-                transform: none;
-            }
+            #MainMenu, .stDeployButton { display: none !important; }
             [data-testid="stMain"], section.main,
             [data-testid="stAppViewContainer"] > .main {
                 margin-left: 0 !important;
@@ -440,7 +429,11 @@ def inject_css(dark: bool) -> None:
             }
             .hold-compact .saas-sub { display: none; }
             .hold-compact .saas-sym { font-size: 12px; }
-            .block-container { padding-top: 0.8rem !important; }
+            [data-testid="stSidebarCollapsedControl"] {
+                display: flex !important;
+                visibility: visible !important;
+                z-index: 1000002 !important;
+            }
         }
         .hold-card {
             background: #fff; border: 1px solid #e8eaee; border-radius: 16px;
@@ -536,10 +529,6 @@ def inject_css(dark: bool) -> None:
                 position: sticky; left: 0; background: #fff; z-index: 1;
             }
             [data-testid="stAppViewContainer"] { display: block !important; }
-            section[data-testid="stSidebar"] {
-                position: fixed !important; z-index: 1000001 !important;
-                height: 100% !important;
-            }
             section.main, [data-testid="stMain"],
             [data-testid="stAppViewContainer"] > .main {
                 width: 100% !important; max-width: 100% !important;
@@ -630,12 +619,6 @@ def inject_css(dark: bool) -> None:
                 flex: 1 1 auto !important;
             }
             .app-sub { display: none; }
-            section[data-testid="stSidebar"] {
-                position: fixed !important;
-                z-index: 1000001 !important;
-                min-width: min(88vw, 380px) !important;
-                max-width: min(88vw, 380px) !important;
-            }
             section.main, [data-testid="stAppViewContainer"] > .main,
             .stApp [data-testid="stMain"] {
                 margin-left: 0 !important;
@@ -645,9 +628,6 @@ def inject_css(dark: bool) -> None:
                 padding: 8px 10px 12px !important;
             }
             [data-testid="stFileUploader"] { padding: 12px; }
-            section[data-testid="stSidebar"] {
-                min-width: min(88vw, 380px) !important;
-            }
             section[data-testid="stSidebar"] .stButton > button {
                 min-height: 44px !important;
             }
