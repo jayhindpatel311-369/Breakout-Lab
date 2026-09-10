@@ -399,9 +399,25 @@ def inject_css(dark: bool) -> None:
         .m-lab { display: none; }
         .m-val { display: inline; }
         .hold-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
-        @media (min-width: 900px) {
-            .hold-list { grid-template-columns: 1fr 1fr; }
+        .hold-desktop { display: block; }
+        .hold-mobile { display: none; }
+        @media (max-width: 768px) {
+            .hold-desktop { display: none !important; }
+            .hold-mobile { display: block !important; }
         }
+        .hold-compact { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .hold-compact th {
+            text-align: left; font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+            color: #9ca3af; font-weight: 700; padding: 8px 6px; border-bottom: 1px solid #eef0f3;
+            white-space: nowrap;
+        }
+        .hold-compact th.num, .hold-compact td.num { text-align: right; }
+        .hold-compact td {
+            padding: 10px 6px; border-bottom: 1px solid #f3f4f6; vertical-align: middle;
+        }
+        .hold-compact td.next { font-size: 11px; color: #4b5563; white-space: normal; max-width: 120px; }
+        .hold-compact .saas-av { width: 24px; height: 24px; min-width: 24px; font-size: 11px; }
+        .hold-compact tfoot td { font-size: 12px; color: #4b5563; border-bottom: none; padding-top: 10px; }
         .hold-card {
             background: #fff; border: 1px solid #e8eaee; border-radius: 16px;
             padding: 14px 14px 8px; box-shadow: 0 1px 2px rgba(17,24,39,.04);
@@ -784,7 +800,8 @@ def saas_hold_html(df: pd.DataFrame, capital: float | None = None,
              "Unrealised", "P&L %", "Open risk", "Next"]
     th = "".join(f'<th{" class=num" if h not in ("Stock","Entry","Next") else ""}>{h}</th>'
                  for h in heads)
-    rows = []
+    table_rows = []
+    compact_rows = []
     for _, r in df.iterrows():
         pnl = r.get("unrealised")
         pct = r.get("gain_%")
@@ -822,20 +839,29 @@ def saas_hold_html(df: pd.DataFrame, capital: float | None = None,
         risk_s = (rupees(risk_rs) if risk_rs is not None else "—")
         if risk_note:
             risk_s += f'<div class="saas-sub">{risk_note}</div>'
-        rows.append(
-            f'<article class="hold-card"><div class="hold-head">{stock}</div>'
-            f'<div class="hold-kvs">'
-            f'<div class="kv"><span>Entry</span><b>{when}</b></div>'
-            f'<div class="kv"><span>Qty</span><b>{int(qty)}</b></div>'
-            f'<div class="kv"><span>Avg price</span><b>{_px(r.get("entry_price"))}</b></div>'
-            f'<div class="kv"><span>CMP</span><b>{_px(cmp_)}</b></div>'
-            f'<div class="kv"><span>Stop</span><b>{_px(stop)}</b></div>'
-            f'<div class="kv"><span>Value</span><b>{rupees(r.get("open_value"))}</b></div>'
-            f'<div class="kv {_tone_cls(pnl)}"><span>Unrealised</span><b>{_signed_rupees(pnl)}</b></div>'
-            f'<div class="kv {_tone_cls(pct)}"><span>P&L %</span><b>{pct_s or "—"}</b></div>'
-            f'<div class="kv"><span>Open risk</span><b>{risk_s}</b></div>'
-            f'<div class="kv"><span>Next</span><b>{_esc(nxt)}</b></div>'
-            f'</div></article>'
+        table_rows.append(
+            "<tr>"
+            + _td("Stock", stock)
+            + _td("Entry", when)
+            + _td("Qty", str(int(qty)), "num")
+            + _td("Avg price", _px(r.get("entry_price")), "num")
+            + _td("CMP", _px(cmp_), "num")
+            + _td("Stop", _px(stop), "num")
+            + _td("Value", rupees(r.get("open_value")), "num")
+            + _td("Unrealised", _signed_rupees(pnl), f"num {_tone_cls(pnl)}")
+            + _td("P&L %", pct_s, f"num {_tone_cls(pct)}")
+            + _td("Open risk", risk_s, "num")
+            + _td("Next", f'<div class="saas-next">{_esc(nxt)}</div>')
+            + "</tr>"
+        )
+        compact_rows.append(
+            "<tr>"
+            f'<td>{stock}</td>'
+            f'<td class="num">{_px(r.get("entry_price"))}</td>'
+            f'<td class="num">{_px(cmp_)}</td>'
+            f'<td class="num {_tone_cls(pct)}">{pct_s or "—"}</td>'
+            f'<td class="num">{_px(stop)}</td>'
+            "</tr>"
         )
     tot = (float(risk_total) if risk_total is not None
            else float(pd.to_numeric(df["open_risk"], errors="coerce").fillna(0).sum())
@@ -843,8 +869,22 @@ def saas_hold_html(df: pd.DataFrame, capital: float | None = None,
     cap_bit = ""
     if capital and float(capital) > 0:
         cap_bit = f" · {tot / float(capital) * 100:,.2f}% of capital ({rupees(capital)})"
-    foot = f'<div class="hold-foot"><b>Open Risk total {rupees(tot)}</b>{cap_bit}</div>'
-    return f'<div class="hold-list">{"".join(rows)}{foot}</div>'
+    tfoot = (f'<tfoot><tr><td colspan="{len(heads)}" class="num">'
+             f'<b>Open Risk total {rupees(tot)}</b>{cap_bit}</td></tr></tfoot>')
+    table = (f'<div class="hold-desktop saas-wrap"><table class="saas-table">'
+             f'<thead><tr>{th}</tr></thead><tbody>{"".join(table_rows)}</tbody>'
+             f'{tfoot}</table></div>')
+    cards = (
+        '<div class="hold-mobile">'
+        '<table class="hold-compact"><thead><tr>'
+        '<th>Stock</th><th class="num">Avg</th><th class="num">CMP</th>'
+        '<th class="num">P&L %</th><th class="num">Stop</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(compact_rows)}</tbody>'
+        f'<tfoot><tr><td colspan="5"><b>Open Risk total {rupees(tot)}</b>{cap_bit}</td></tr></tfoot>'
+        '</table></div>'
+    )
+    return table + cards
 
 
 def saas_fills_html(df: pd.DataFrame) -> str:
