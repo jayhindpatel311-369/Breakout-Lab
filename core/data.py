@@ -158,8 +158,22 @@ def apply_live_mark(close: pd.DataFrame, live) -> pd.DataFrame:
     px = px[~px.index.duplicated(keep="last")].sort_index()
 
     live_map = dict(live) if not isinstance(live, dict) else live
-    now = pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None).normalize()
-    last = pd.Timestamp(px.index[-1]).normalize()
+    try:
+        from zoneinfo import ZoneInfo
+        n = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+    except Exception:
+        n = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    now = pd.Timestamp(n).normalize()
+    last = pd.Timestamp(px.index[-1])
+    try:
+        if getattr(last, "tzinfo", None) is not None:
+            last = last.tz_convert(None)
+    except Exception:
+        try:
+            last = last.tz_localize(None)
+        except Exception:
+            pass
+    last = pd.Timestamp(last).normalize()
     if last < now and now.weekday() < 5:
         px.loc[now] = px.iloc[-1]
         target = now
