@@ -130,6 +130,51 @@ def live_last_prices(symbols: list[str]) -> pd.Series:
     return pd.Series(out, dtype=float)
 
 
+def apply_live_mark(close: pd.DataFrame, live) -> pd.DataFrame:
+    """Stamp live CMP onto the curve without erasing yesterday's close.
+
+    P&L and drawdown must share the same last point. If we overwrite the last
+    historical bar with today's live price, yesterday's peak disappears and
+    max DD is understated. On a weekday, when the daily cache has not yet
+    grown a bar for today, we APPEND a live mark. Weekend: leave Friday as
+    the last bar and only refresh its last-traded print.
+    """
+    if close is None or close.empty or live is None or len(live) == 0:
+        return close
+    px = close.copy()
+    idx = []
+    for d in px.index:
+        t = pd.Timestamp(d)
+        try:
+            if getattr(t, "tzinfo", None) is not None:
+                t = t.tz_convert(None)
+        except Exception:
+            try:
+                t = t.tz_localize(None)
+            except Exception:
+                pass
+        idx.append(pd.Timestamp(t).normalize())
+    px.index = pd.DatetimeIndex(idx)
+    px = px[~px.index.duplicated(keep="last")].sort_index()
+
+    live_map = dict(live) if not isinstance(live, dict) else live
+    now = pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None).normalize()
+    last = pd.Timestamp(px.index[-1]).normalize()
+    if last < now and now.weekday() < 5:
+        px.loc[now] = px.iloc[-1]
+        target = now
+    else:
+        target = last
+    for sym, p in live_map.items():
+        try:
+            v = float(p)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(v) and v > 0 and sym in px.columns:
+            px.loc[target, sym] = v
+    return px
+
+
 def _safe_name(ticker: str) -> str:
     return ticker.replace("^", "_IDX_").replace(".", "_").replace("/", "_")
 

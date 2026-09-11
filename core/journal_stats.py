@@ -142,6 +142,22 @@ def equity_curve(book: Book, close: pd.DataFrame | None) -> pd.Series:
     return out
 
 
+def window_pnl(eq: pd.Series, n_sessions: int) -> dict:
+    """P&L from n trading sessions ago to the latest mark (live if stamped)."""
+    out = {"pnl": float("nan"), "pct": float("nan"), "sessions": 0}
+    if eq is None or len(eq) < 2 or n_sessions < 1:
+        return out
+    s = eq.dropna().sort_index()
+    if len(s) < 2:
+        return out
+    i = min(int(n_sessions), len(s) - 1)
+    start, end = float(s.iloc[-(i + 1)]), float(s.iloc[-1])
+    out["pnl"] = end - start
+    out["pct"] = (end / start - 1.0) * 100.0 if start else float("nan")
+    out["sessions"] = i
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # round trips
 # --------------------------------------------------------------------------- #
@@ -218,9 +234,12 @@ def stats(book: Book, close: pd.DataFrame | None = None) -> dict:
             open_val += p.open_qty * p.entry_price
 
     divs = float(sum(float(r.get("amount", 0.0)) for r in getattr(book, "income", [])))
-    # Live book is the source of truth: cash + marked opens. ROI, net P&L and
-    # "final capital" all come off this so they cannot disagree.
+    # Live book is the source of truth: cash + marked opens. When a daily
+    # equity curve exists, Net P&L is last equity minus capital so the KPI
+    # and the year/month/week tables cannot disagree.
     value = float(book.cash) + open_val
+    if len(eq):
+        value = float(eq.iloc[-1])
     net = value - float(book.capital)
     out = {
         "Net P&L": net,
@@ -270,10 +289,13 @@ def stats(book: Book, close: pd.DataFrame | None = None) -> dict:
     if len(eq) > 2:
         years = (eq.index[-1] - eq.index[0]).days / 365.25
         rets = M.to_returns(eq)
+        fl = cashflow_series(book)
+        inception = float(book.capital) - (float(fl.sum()) if len(fl) else 0.0)
+        dd_path = pd.concat([pd.Series([inception], index=[eq.index[0]]), eq]).astype(float)
         out.update({
             "Book age (years)": years,
             "CAGR %": M.cagr(eq) * 100 if years > 0 else np.nan,
-            "Max drawdown %": M.max_drawdown(eq) * 100,
+            "Max drawdown %": M.max_drawdown(dd_path) * 100,
             "Calmar": M.calmar(eq),
             "Sharpe": M.sharpe(rets),
             "Days tracked": len(eq),
@@ -288,42 +310,80 @@ def stats(book: Book, close: pd.DataFrame | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 # period tables
 # --------------------------------------------------------------------------- #
-def _period_table(eq: pd.Series, freq: str, label: str) -> pd.DataFrame:
-    """Return and worst drawdown per calendar period, measured inside it.
+def cashflow_series(book: Book) -> pd.Series:
+    """Deposits / withdrawals by day (compounding steps ignored)."""
+    acc: dict[pd.Timestamp, float] = {}
+    for f in getattr(book, "cash_flows", []) or []:
+        if str(f.get("kind") or "") == "compound":
+            continue
+        if not f.get("date"):
+            continue
+        d = _as_day(f.get("date"))
+        acc[d] = acc.get(d, 0.0) + float(f.get("amount") or 0.0)
+    if not acc:
+        return pd.Series(dtype=float)
+    return pd.Series(acc).sort_index()
 
-    The drawdown column is the deepest fall *within* that period, not the
-    portfolio's all-time drawdown sliced up — which is the number you want when
-    asking "how bad did 2024 feel while I was living through it".
+
+def _period_table(eq: pd.Series, freq: str, label: str,
+                  capital: float | None = None,
+                  flows: pd.Series | None = None) -> pd.DataFrame:
+    """Return and worst drawdown per calendar period.
+
+    Periods chain: first Start is inception capital (current capital minus
+    later deposits), each next Start is the previous End. P&L = End − Start −
+    deposits in the period, so week + month + year P&L all add up to the same
+    Net P&L as the KPI. Drawdown is peak-to-trough inside the period and is
+    always a negative number (or 0).
     """
-    if len(eq) < 2:
+    if eq is None or len(eq) < 1:
         return pd.DataFrame()
+    eq = eq.dropna().sort_index()
+    flow_s = flows.dropna() if flows is not None and len(flows) else pd.Series(dtype=float)
+    total_flow = float(flow_s.sum()) if len(flow_s) else 0.0
+    if capital is not None and float(capital) > 0:
+        prev_end = float(capital) - total_flow
+    else:
+        prev_end = float(eq.iloc[0])
     rows = []
     for period, chunk in eq.groupby(eq.index.to_period(freq)):
-        if len(chunk) < 2:
-            continue
-        dd = float((chunk / chunk.cummax() - 1).min() * 100)
+        end = float(chunk.iloc[-1])
+        start = float(prev_end)
+        net_flow = 0.0
+        if len(flow_s):
+            mask = (flow_s.index >= chunk.index[0]) & (flow_s.index <= chunk.index[-1])
+            if bool(mask.any()):
+                net_flow = float(flow_s.loc[mask].sum())
+        pnl = end - start - net_flow
+        ret = (pnl / start * 100.0) if start else 0.0
+        path = pd.concat([pd.Series([start], index=[chunk.index[0]]), chunk]).astype(float)
+        dd = float((path / path.cummax() - 1.0).min() * 100.0)
         rows.append({
             label: str(period),
-            "Start": round(float(chunk.iloc[0]), 0),
-            "End": round(float(chunk.iloc[-1]), 0),
-            "Return %": round((chunk.iloc[-1] / chunk.iloc[0] - 1) * 100, 2),
-            "P&L": round(float(chunk.iloc[-1] - chunk.iloc[0]), 0),
+            "Start": round(start, 0),
+            "End": round(end, 0),
+            "Return %": round(ret, 2),
+            "P&L": round(pnl, 0),
             "Drawdown %": round(dd, 2),
         })
+        prev_end = end
     return pd.DataFrame(rows)
 
 
-def yearly(eq: pd.Series) -> pd.DataFrame:
-    return _period_table(eq, "Y", "Year")
+def yearly(eq: pd.Series, capital: float | None = None,
+           flows: pd.Series | None = None) -> pd.DataFrame:
+    return _period_table(eq, "Y", "Year", capital, flows)
 
 
-def monthly(eq: pd.Series) -> pd.DataFrame:
-    return _period_table(eq, "M", "Month")
+def monthly(eq: pd.Series, capital: float | None = None,
+            flows: pd.Series | None = None) -> pd.DataFrame:
+    return _period_table(eq, "M", "Month", capital, flows)
 
 
-def weekly(eq: pd.Series) -> pd.DataFrame:
+def weekly(eq: pd.Series, capital: float | None = None,
+           flows: pd.Series | None = None) -> pd.DataFrame:
     """Friday-week marks — the cadence this system actually trades on."""
-    return _period_table(eq, "W-FRI", "Week")
+    return _period_table(eq, "W-FRI", "Week", capital, flows)
 
 
 # --------------------------------------------------------------------------- #
