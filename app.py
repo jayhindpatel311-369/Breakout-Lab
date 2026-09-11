@@ -71,6 +71,28 @@ from core import storage as sg
 import core.gvault as gv
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_ZIP_SKIP_DIR = {"__pycache__", ".git", ".venv", "price_cache", "journal", "backups"}
+
+
+def _latest_zip_bytes() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for dp, dns, fns in os.walk(APP_DIR):
+            dns[:] = [d for d in dns if d not in _ZIP_SKIP_DIR]
+            rel_dp = os.path.relpath(dp, APP_DIR)
+            if rel_dp.startswith("D:") or "TIC" in rel_dp.replace("\\", "/"):
+                continue
+            for fn in fns:
+                if fn.endswith((".pyc", ".csv", ".jsonl", ".zip")):
+                    continue
+                if fn.startswith("sweep_") or fn in ("app_settings.json",) or fn.startswith(".breakout"):
+                    continue
+                full = os.path.join(dp, fn)
+                rel = os.path.relpath(full, APP_DIR)
+                if rel.startswith("D:") or ":/" in rel.replace("\\", "/"):
+                    continue
+                zf.write(full, os.path.join("breakout_lab", rel))
+    return buf.getvalue()
 
 
 def _now_ist() -> datetime:
@@ -136,14 +158,15 @@ def period_table_html(df: pd.DataFrame, kind: str) -> str:
         dd = float(r.get("Drawdown %", 0) or 0)
         rc = "pos" if ret > 0 else ("neg" if ret < 0 else "")
         pc = "pos" if pnl > 0 else ("neg" if pnl < 0 else "")
+        dc = "neg" if dd < -1e-9 else ""
         rows.append(
             "<tr>"
             f"{_td(label, period)}"
             f"{_td('Start', rupees(float(r['Start'])), 'num')}"
             f"{_td('End', rupees(float(r['End'])), 'num')}"
             f"{_td('Return %', f'{ret:+.2f}%', f'num {rc}')}"
-            f"{_td('P&L', rupees(pnl), f'num {pc}')}"
-            f"{_td('Drawdown %', f'{dd:.2f}%', 'num neg')}"
+            f"{_td('P&L', _signed_rupees(pnl), f'num {pc}')}"
+            f"{_td('Drawdown %', f'{dd:+.2f}%', f'num {dc}')}"
             "</tr>"
         )
     return (f'<div class="ptable-wrap"><table class="ptable"><thead><tr>{head}</tr></thead>'
@@ -509,6 +532,7 @@ def inject_css(dark: bool) -> None:
         @media (min-width: 1100px) {
             .kpi-grid.n-5 { grid-template-columns: repeat(5, 1fr); }
             .kpi-grid.n-4 { grid-template-columns: repeat(4, 1fr); }
+            .kpi-grid.n-2 { grid-template-columns: repeat(2, 1fr); }
         }
 
         html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -1413,9 +1437,21 @@ def sidebar() -> dict:
         _on_cloud = os.path.isdir("/mount/src")
         if not _on_cloud:
             try:
+                st.download_button(
+                    "Download latest zip",
+                    _latest_zip_bytes(),
+                    file_name="breakout_lab_ui_update.zip",
+                    mime="application/zip",
+                    key="pc_zip_sidebar",
+                    help="Saari files — extract karke run.bat",
+                    type="primary",
+                )
+            except OSError:
+                pass
+            try:
                 with open(os.path.join(APP_DIR, "app.py"), "rb") as _af:
                     st.download_button(
-                        "Download app.py",
+                        "Download app.py only",
                         _af.read(),
                         file_name="app.py",
                         mime="text/plain",
@@ -1423,17 +1459,6 @@ def sidebar() -> dict:
                     )
             except OSError:
                 pass
-            _pc_zip = os.path.join(APP_DIR, "BreakoutLab-PC.zip")
-            if os.path.isfile(_pc_zip):
-                with open(_pc_zip, "rb") as _zf:
-                    st.download_button(
-                        "Download PC zip",
-                        _zf.read(),
-                        file_name="breakout_lab_ui_update.zip",
-                        mime="application/zip",
-                        key="pc_zip_sidebar",
-                        help="Extract → run.bat",
-                    )
         params_ui()
         data_folder_ui()
         s["dark"] = False
@@ -3532,6 +3557,7 @@ def tab_positions(s: dict) -> None:
 
     last_px = panel["Close"].iloc[-1].copy()
     live_asof = ""
+    live = pd.Series(dtype=float)
     if not s.get("demo"):
         with st.spinner("Fetching live CMP…"):
             live = data_mod.live_last_prices(list(book.open_symbols()))
@@ -3561,6 +3587,20 @@ def tab_positions(s: dict) -> None:
     risk_pct_cap = (risk_total / cap * 100) if cap else np.nan
 
     st.markdown("##### Dashboard")
+    close_m = data_mod.apply_live_mark(panel["Close"].copy(), live)
+    eq_pos = js.equity_curve(book, close_m)
+    td = js.window_pnl(eq_pos, 1)
+    d5 = js.window_pnl(eq_pos, 5)
+    def _wp(lab, w, sub_ok, sub_short):
+        if not np.isfinite(w["pnl"]):
+            return (lab, "—", "needs a prior session", "")
+        sub = sub_ok if w["sessions"] >= (5 if "5" in lab else 1) else sub_short.format(w["sessions"])
+        return (lab, _signed_rupees(w["pnl"]),
+                f"{w['pct']:+,.2f}% · {sub}", tone_of(w["pnl"]))
+    tiles_row([
+        _wp("Today P&L", td, "vs previous close (live)", "{} session(s)"),
+        _wp("Last 5 days P&L", d5, "5 trading days · live mark", "{} trading day(s) in book"),
+    ])
     tiles_row([
         ("Portfolio value", rupees(d["portfolio value"]),
          f"capital {rupees(book.capital)}", ""),
@@ -3725,11 +3765,11 @@ def tab_journal(s: dict) -> None:
     eq = js.equity_curve(book, close)
 
     tiles_row([
-        ("Net P&L", rupees(st_["Net P&L"]),
-         f"realised {rupees(st_['Realised P&L'])} · unrealised {rupees(st_['Unrealised P&L'])}"
+        ("Net P&L", _signed_rupees(st_["Net P&L"]),
+         f"realised {rupees(st_['Realised P&L'])} · unrealised {_signed_rupees(st_['Unrealised P&L'])}"
          + (f" · dividends {rupees(st_['Dividends'])}" if st_.get("Dividends") else ""),
          tone_of(st_["Net P&L"])),
-        ("Overall ROI", f"{st_['ROI %']:,.1f}%" if np.isfinite(st_["ROI %"]) else "—",
+        ("Overall ROI", f"{st_['ROI %']:+,.2f}%" if np.isfinite(st_["ROI %"]) else "—",
          f"on {rupees(st_['Capital'])}", tone_of(st_["ROI %"])),
         ("Win rate", f"{st_['Win rate %']:,.0f}%" if np.isfinite(st_["Win rate %"]) else "—",
          f"{st_['Wins']}W / {st_['Losses']}L on closed trades", ""),
@@ -3739,8 +3779,8 @@ def tab_journal(s: dict) -> None:
          "∞" if st_["Profit factor"] == np.inf else _safe_ratio(st_["Profit factor"]),
          "gross win / gross loss", ""),
         ("Max drawdown",
-         f"{st_['Max drawdown %']:,.1f}%" if np.isfinite(st_["Max drawdown %"]) else "—",
-         "peak-to-trough of daily equity (cash+MTM)" if np.isfinite(st_["Max drawdown %"])
+         f"{st_['Max drawdown %']:+,.2f}%" if np.isfinite(st_["Max drawdown %"]) else "—",
+         "peak-to-trough of daily equity + live mark" if np.isfinite(st_["Max drawdown %"])
          else "needs prices", "neg"),
     ])
 
@@ -3878,9 +3918,9 @@ def tab_journal(s: dict) -> None:
                 show_chart(fig)
 
         with card("Equity by period", "Full width — year, month or week. No sideways scroll."):
-            ydf = js.yearly(eq)
-            mdf = js.monthly(eq)
-            wdf = js.weekly(eq)
+            ydf = js.yearly(eq, capital=float(book.capital), flows=js.cashflow_series(book))
+            mdf = js.monthly(eq, capital=float(book.capital), flows=js.cashflow_series(book))
+            wdf = js.weekly(eq, capital=float(book.capital), flows=js.cashflow_series(book))
             t_y, t_m, t_w = st.tabs([
                 f"Year by year ({len(ydf)})",
                 f"Month by month ({len(mdf)})",
@@ -4015,8 +4055,10 @@ def tab_journal(s: dict) -> None:
             if len(rt):
                 rt.to_excel(xl, sheet_name="Closed trades", index=False)
             if len(eq) > 2:
-                js.yearly(eq).to_excel(xl, sheet_name="Yearly", index=False)
-                js.monthly(eq).to_excel(xl, sheet_name="Monthly", index=False)
+                fl = js.cashflow_series(book)
+                cap = float(book.capital)
+                js.yearly(eq, capital=cap, flows=fl).to_excel(xl, sheet_name="Yearly", index=False)
+                js.monthly(eq, capital=cap, flows=fl).to_excel(xl, sheet_name="Monthly", index=False)
                 eq.to_frame("equity").to_excel(xl, sheet_name="Equity curve")
             if not slip.empty:
                 slip.to_excel(xl, sheet_name="Slippage", index=False)
