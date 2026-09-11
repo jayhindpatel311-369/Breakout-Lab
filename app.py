@@ -3587,7 +3587,12 @@ def tab_positions(s: dict) -> None:
     risk_pct_cap = (risk_total / cap * 100) if cap else np.nan
 
     st.markdown("##### Dashboard")
-    close_m = data_mod.apply_live_mark(panel["Close"].copy(), live)
+    close_src = panel["Close"].copy()
+    apply = getattr(data_mod, "apply_live_mark", None)
+    try:
+        close_m = apply(close_src, live) if apply is not None else close_src
+    except Exception:
+        close_m = close_src
     eq_pos = js.equity_curve(book, close_m)
     td = js.window_pnl(eq_pos, 1)
     d5 = js.window_pnl(eq_pos, 5)
