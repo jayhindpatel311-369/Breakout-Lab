@@ -136,8 +136,8 @@ def apply_live_mark(close: pd.DataFrame, live) -> pd.DataFrame:
     P&L and drawdown must share the same last point. If we overwrite the last
     historical bar with today's live price, yesterday's peak disappears and
     max DD is understated. On a weekday, when the daily cache has not yet
-    grown a bar for today, we APPEND a live mark. Weekend: leave Friday as
-    the last bar and only refresh its last-traded print.
+    grown a bar for today, we APPEND a live mark. On a weekend there is no
+    new session at all, so the function is a no-op — see below.
     """
     if close is None or close.empty or live is None or len(live) == 0:
         return close
@@ -174,7 +174,15 @@ def apply_live_mark(close: pd.DataFrame, live) -> pd.DataFrame:
         except Exception:
             pass
     last = pd.Timestamp(last).normalize()
-    if last < now and now.weekday() < 5:
+    if now.weekday() >= 5:
+        # Market is shut all day — nothing traded since Friday's close. The
+        # previous version still stamped a "live" print onto that Friday bar
+        # here, and a 5-minute-bar replay of Friday's last tick is not always
+        # identical to Friday's own official close, so the equity curve moved
+        # on a day the market never opened — the exact "+1,130 on a Sunday"
+        # symptom. Leave the cached close alone; there is nothing live to add.
+        return px
+    if last < now:
         px.loc[now] = px.iloc[-1]
         target = now
     else:
