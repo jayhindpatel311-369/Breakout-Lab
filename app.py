@@ -3209,9 +3209,13 @@ def tab_buys(s: dict) -> None:
         return
 
     week = wc.index[-1]
-    # A week is only usable once it has actually finished.
     last_daily = panel["Close"].index[-1]
-    if last_daily < week:
+    # A week is only usable once it has actually finished — judged against
+    # TODAY's real date, not the last bar. If the week's Friday is an NSE
+    # holiday there is no bar for it; the last bar (Thursday) already IS that
+    # week's close via resample's "last", so bar-date < week must not be read
+    # as "unfinished" or it quietly re-signals a week already acted on.
+    if pd.Timestamp(_now_ist().date()) <= pd.Timestamp(week):
         week = wc.index[-2] if len(wc.index) > 1 else week
     st.caption(f"Signal week ending **{pd.Timestamp(week).date()}** · "
                f"latest price bar {pd.Timestamp(last_daily).date()}")
@@ -3552,7 +3556,14 @@ def tab_positions(s: dict) -> None:
     panel, sig = ctx["panel"], ctx["signals"]
     wc = sig.weekly.get("Close", pd.DataFrame())
     week = wc.index[-1]
-    if panel["Close"].index[-1] < week and len(wc.index) > 1:
+    # "Is this week's bucket final?" must be judged against TODAY's real date,
+    # not the last date with a price bar. The two usually agree, but when the
+    # week's Friday is an NSE holiday there is no bar for Friday at all — the
+    # last bar is Thursday's, which IS the week's true close (resample already
+    # folded it in as "last"). Comparing bar-date < week wrongly read that as
+    # "week unfinished" and stepped back an extra, already-stale week — which
+    # is exactly how a real close-below-EMA exit got reported as "no action".
+    if pd.Timestamp(_now_ist().date()) <= pd.Timestamp(week) and len(wc.index) > 1:
         week = wc.index[-2]
 
     last_px = panel["Close"].iloc[-1].copy()
