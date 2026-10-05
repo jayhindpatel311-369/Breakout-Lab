@@ -163,17 +163,11 @@ def show_money_df(df, money_cols=(), pct_cols=(), height=None):
     if df is None or df.empty:
         st.caption("No rows yet.")
         return
-    view = df.copy()
-    cfg = {}
-    for c in money_cols:
-        if c in view.columns:
-            view[c] = view[c].map(lambda x: rupees(float(x)) if pd.notna(x) and np.isfinite(x) else "—")
-    for c in pct_cols:
-        if c in view.columns:
-            view[c] = view[c].map(lambda x: f"{float(x):+.2f}%" if pd.notna(x) and np.isfinite(x) else "—")
-    auto = 46 + 34 * max(len(view), 1)
-    h = min(auto, 420) if height is None else min(max(auto, 80), int(height))
-    return st.dataframe(view, **_WIDE, hide_index=True, column_config=cfg, height=h)
+    # one table style across the app: the same HTML table as the holdings
+    html = saas_simple_html(df, money=tuple(money_cols), pct=tuple(pct_cols))
+    if len(df) > 12:
+        html = html.replace('class="saas-wrap"', 'class="saas-wrap tall"', 1)
+    return st.markdown(html, unsafe_allow_html=True)
 
 
 def period_table_html(df: pd.DataFrame, kind: str) -> str:
@@ -312,25 +306,125 @@ def inject_css() -> None:
             border: 1px solid var(--accent-border) !important; border-radius: 10px !important; font-weight: 650 !important;
         }
 
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 6px; border-bottom: 1px solid var(--border); background: transparent;
+        /* main navigation: text tabs, accent underline (Streamlit draws it) */
+        [data-testid="stTabs"] [role="tablist"] {
+            gap: 26px; border-bottom: 1px solid var(--border); background: transparent;
         }
-        .stTabs [data-baseweb="tab"] {
-            color: var(--text-3) !important; font-weight: 650; padding: 10px 16px;
-            border-radius: 10px 10px 0 0;
+        [data-testid="stTab"] {
+            color: var(--text-2) !important; padding: 10px 2px !important;
+            background: transparent !important;
         }
-        .stTabs [aria-selected="true"] {
-            color: var(--accent) !important; background: var(--accent-soft) !important;
+        [data-testid="stTab"] p { font-size: 15px !important; font-weight: 600 !important; }
+        [data-testid="stTab"]:hover { color: var(--text-1) !important; }
+        [data-testid="stTab"][aria-selected="true"] { color: var(--text-1) !important; }
+        /* tabs inside a tab: a segmented control, so the hierarchy reads at a glance */
+        [data-testid="stTabs"] [data-testid="stTabs"] [role="tablist"] {
+            display: inline-flex !important; width: fit-content !important; gap: 4px; padding: 4px;
+            background: var(--bg-sunken); border: none; border-radius: 10px;
+        }
+        [data-testid="stTabs"] [data-testid="stTabs"] [data-testid="stTab"] {
+            padding: 6px 14px !important; border-radius: var(--r-md);
+        }
+        [data-testid="stTabs"] [data-testid="stTabs"] [data-testid="stTab"] p {
+            font-size: 13px !important;
+        }
+        [data-testid="stTabs"] [data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] {
+            background: var(--surface) !important; box-shadow: var(--shadow-xs);
+        }
+        [data-testid="stTabs"] [data-testid="stTabs"] [data-testid="stTab"] > div[data-rac] {
+            display: none;                      /* no underline inside the pill */
         }
 
-        h1, h2, h3, h4 { color: var(--text-1) !important; letter-spacing: -0.03em; }
+        /* buttons */
+        .stButton > button, .stDownloadButton > button, [data-testid="stPopover"] > div > button,
+        .stFormSubmitButton > button {
+            min-height: 36px; border-radius: var(--r-md) !important; font-weight: 600 !important;
+            background: var(--surface) !important; color: var(--text-1) !important;
+            border: 1px solid var(--border-strong) !important; box-shadow: var(--shadow-xs) !important;
+            transition: background .12s ease, border-color .12s ease, transform .05s ease;
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover,
+        [data-testid="stPopover"] > div > button:hover {
+            background: var(--surface-muted) !important; border-color: var(--text-disabled) !important;
+        }
+        .stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"],
+        .stButton > button[data-testid="stBaseButton-primary"] {
+            background: var(--accent) !important; color: #fff !important;
+            border-color: var(--accent) !important;
+        }
+        .stButton > button[kind="primary"]:hover,
+        .stButton > button[data-testid="stBaseButton-primary"]:hover {
+            background: var(--accent-hover) !important; border-color: var(--accent-hover) !important;
+        }
+        .stButton > button:active, .stDownloadButton > button:active { transform: translateY(1px); }
+        .stButton > button:focus-visible, .stDownloadButton > button:focus-visible,
+        [data-testid="stPopover"] > div > button:focus-visible {
+            outline: none !important; box-shadow: 0 0 0 3px rgba(43,89,195,.18) !important;
+        }
+        .stButton > button:disabled, .stDownloadButton > button:disabled {
+            background: var(--surface-muted) !important; color: var(--text-disabled) !important;
+            border-color: var(--border) !important; box-shadow: none !important;
+        }
+        /* destructive actions read as such */
+        .st-key-rm_go button, .st-key-draft_drop_go button {
+            color: var(--neg) !important; border-color: var(--neg-border) !important;
+        }
+        .st-key-rm_go button:hover, .st-key-draft_drop_go button:hover {
+            background: var(--neg-soft) !important;
+        }
+
+        /* inputs */
+        .stSelectbox [data-baseweb="select"] > div, .stMultiSelect [data-baseweb="select"] > div,
+        .stNumberInput input, .stTextInput input, .stDateInput input, textarea {
+            border-color: var(--border-strong) !important; border-radius: var(--r-md) !important;
+            min-height: 38px;
+        }
+        .stSelectbox [data-baseweb="select"] > div:focus-within,
+        .stNumberInput div:focus-within > input, .stTextInput div:focus-within > input,
+        .stDateInput div:focus-within input, textarea:focus {
+            border-color: var(--accent) !important; box-shadow: 0 0 0 3px rgba(43,89,195,.14) !important;
+        }
+        input::placeholder, textarea::placeholder { color: var(--text-disabled) !important; }
+        [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+        [data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+        [data-testid="stSelectbox"] .react-aria-ComboBox > [role="group"],
+        [data-testid="stMultiSelect"] .react-aria-ComboBox > [role="group"] {
+            background: var(--surface) !important; border: 1px solid var(--border-strong) !important;
+            border-radius: var(--r-md) !important;
+        }
+        .stNumberInput button { color: var(--text-3) !important; background: transparent !important; }
+        label, .stWidgetLabel p { color: var(--text-2) !important; font-weight: 500 !important; }
+        div[data-baseweb="popover"] > div, ul[role="listbox"] {
+            border-radius: 10px !important; box-shadow: var(--shadow-md) !important;
+            border: 1px solid var(--border) !important;
+        }
+
+        /* alerts: a white card with a status stripe, not a coloured block */
+        [data-testid="stAlertContainer"] {
+            background: var(--surface) !important; color: var(--text-1) !important;
+            border: 1px solid var(--border) !important; border-left: 3px solid var(--accent) !important;
+            border-radius: var(--r-lg) !important; box-shadow: var(--shadow-xs);
+        }
+        [data-testid="stAlertContainer"] p, [data-testid="stAlertContainer"] li { color: var(--text-1) !important; }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) [data-testid="stAlertContainer"] {
+            border-left-color: var(--warn) !important; background: #FFFCF5 !important;
+        }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentError"]) [data-testid="stAlertContainer"] {
+            border-left-color: var(--neg) !important; background: #FFFBFB !important;
+        }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) [data-testid="stAlertContainer"] {
+            border-left-color: var(--pos) !important; background: #FAFDFB !important;
+        }
+
+        h1, h2, h3, h4, h5 { color: var(--text-1) !important; letter-spacing: -0.02em; font-weight: 650 !important; }
         .stCaption, .stCaption p { color: var(--text-3) !important; }
         .stRadio label, .stCheckbox label, .stToggle label { color: var(--text-1) !important; }
 
-        [data-testid="stExpander"] {
-            background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-            margin-bottom: 8px;
+        [data-testid="stExpander"] details {
+            background: var(--surface); border: 1px solid var(--border) !important;
+            border-radius: var(--r-lg) !important; margin-bottom: 8px;
         }
+        [data-testid="stExpander"] summary p { font-weight: 500; color: var(--text-1); }
         div[data-testid="stAlert"] { border-radius: 12px; }
 
         .app-top { display:flex; justify-content:space-between; align-items:center;
@@ -398,6 +492,9 @@ def inject_css() -> None:
             background: var(--surface); box-shadow: var(--shadow-xs);
         }
         div[data-testid="stDataFrame"] [data-testid="stDataFrameResizable"] { background: var(--surface); }
+        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stDataFrame"] {
+            border: none; box-shadow: none; border-radius: var(--r-md);
+        }
 
         .cal-wrap { background: var(--surface); border:1px solid var(--border); border-radius:var(--r-xl);
                     padding:18px 20px 14px; margin: 8px 0 18px;
@@ -437,9 +534,11 @@ def inject_css() -> None:
         .ptable-wrap { overflow-x: auto; overflow-y: auto; max-height: 440px; width: 100%;
                        -webkit-overflow-scrolling: touch; }
         .ptable { width: 100%; border-collapse: collapse; table-layout: auto; }
-        .ptable th { text-align: left; font-size: 11px; letter-spacing: .06em;
-                     text-transform: uppercase; color: var(--text-3); font-weight: 650;
-                     padding: 8px 10px; border-bottom: 1px solid var(--divider); }
+        .ptable th { text-align: left; font-size: 12px; letter-spacing: .03em;
+                     text-transform: uppercase; color: var(--text-3); font-weight: 600;
+                     padding: 9px 10px; border-bottom: 1px solid var(--border);
+                     background: var(--surface-muted); }
+        .ptable tbody tr:hover td { background: var(--surface-muted); }
         .ptable td { padding: 9px 10px; border-bottom: 1px solid var(--divider); color: var(--text-1);
                      font-size: 13px; }
         .ptable td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -449,21 +548,32 @@ def inject_css() -> None:
         .saas-wrap { width:100%; overflow-x:auto; }
         .saas-table { width:100%; border-collapse:collapse; }
         .saas-table th {
-            text-align:left; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
-            color:var(--text-3); font-weight:650; padding:10px 12px; border-bottom:1px solid var(--divider);
-            white-space:nowrap;
+            text-align:left; font-size:12px; letter-spacing:.03em; text-transform:uppercase;
+            color:var(--text-3); font-weight:600; padding:10px 12px; border-bottom:1px solid var(--border);
+            white-space:nowrap; background: var(--surface-muted);
+        }
+        .saas-table th:first-child { border-top-left-radius: var(--r-md); }
+        .saas-table th:last-child { border-top-right-radius: var(--r-md); }
+        .saas-table tbody tr:hover td { background: var(--surface-muted); }
+        .saas-wrap.tall { max-height: 460px; overflow-y: auto; }
+        /* Streamlit's markdown styles draw a full grid on every <table>; ours
+           use horizontal rules only */
+        .saas-table, .ptable, .hold-compact { border: none !important; }
+        .saas-table th, .saas-table td, .ptable th, .ptable td, .hold-compact th, .hold-compact td {
+            border-left: none !important; border-right: none !important; border-top: none !important;
         }
         .saas-table th.num { text-align:right; }
         .saas-table td {
-            padding:14px 12px; border-bottom:1px solid var(--divider); color:var(--text-1);
+            padding:12px 12px; border-bottom:1px solid var(--divider); color:var(--text-1);
             font-size:14px; vertical-align:middle;
         }
         .saas-table tr:last-child td { border-bottom:none; }
         .saas-table td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
         .saas-stock { display:flex; gap:10px; align-items:center; }
-        .saas-av { width:36px; height:36px; min-width:36px; border-radius:50%;
+        .saas-av { width:32px; height:32px; min-width:32px; border-radius:50%;
                    display:inline-flex; align-items:center; justify-content:center;
-                   font-weight:700; color:#fff; font-size:13px; letter-spacing:-.02em; }
+                   font-weight:600; color:var(--text-2); background:var(--bg-sunken);
+                   font-size:13px; letter-spacing:-.01em; }
         .saas-sym { font-weight:700; letter-spacing:-.02em; line-height:1.2; }
         .saas-sub { font-size:12px; color:var(--text-3); margin-top:2px; }
         .saas-next { font-size:12px; color:var(--text-2); max-width:160px; line-height:1.35; }
@@ -536,8 +646,13 @@ def inject_css() -> None:
         .kv.neg b { color: var(--neg); }
         .hold-foot { grid-column: 1 / -1; font-size: 13px; color: var(--text-2);
                      padding: 8px 4px 0; }
-        .badge { display:inline-block; padding:3px 9px; border-radius:999px;
-                 font-size:11px; font-weight:700; letter-spacing:.04em; }
+        .badge { display:inline-block; padding:2px 8px; border-radius:999px;
+                 font-size:12px; font-weight:600; letter-spacing:.01em; line-height:1.5;
+                 background: var(--bg-sunken); color: var(--text-2); }
+        .badge-accent { background: var(--accent-soft); color: var(--accent); }
+        .badge-pos { background: var(--pos-soft); color: var(--pos); }
+        .badge-warn { background: var(--warn-soft); color: var(--warn); }
+        .badge-neg { background: var(--neg-soft); color: var(--neg); }
         .badge-buy { background:var(--pos-soft); color:var(--pos); }
         .badge-sell { background:var(--neg-soft); color:var(--neg); }
         .act-banner {
@@ -560,8 +675,8 @@ def inject_css() -> None:
         .act-why { flex:1; color:var(--text-2); font-size:14px; }
         .act-meta { font-variant-numeric:tabular-nums; font-size:13px; color:var(--text-3);
                     white-space:nowrap; text-align:right; }
-        .tag { display:inline-block; padding:3px 9px; border-radius:999px;
-               font-size:11px; font-weight:700; letter-spacing:.04em; }
+        .tag { display:inline-block; padding:2px 8px; border-radius:999px;
+               font-size:12px; font-weight:600; letter-spacing:.02em; }
         .tag-book { background:var(--pos-soft); color:var(--pos); }
         .tag-sl { background:var(--neg-soft); color:var(--neg); }
 
@@ -834,14 +949,10 @@ def _td(label: str, inner: str, cls: str = "") -> str:
             f'<span class="m-val">{inner}</span></td>')
 
 
-_AVATAR = ["#2563eb", "#7c3aed", "#0891b2", "#059669", "#d97706",
-           "#dc2626", "#db2777", "#4f46e5", "#0f766e", "#b45309"]
-
-
 def _avatar(sym: str) -> str:
     s = str(sym or "?")
-    col = _AVATAR[sum(ord(c) for c in s) % len(_AVATAR)]
-    return f'<span class="saas-av" style="background:{col}">{_esc(s[:1])}</span>'
+    # neutral monogram: colour is kept for meaning (profit, loss, status)
+    return f'<span class="saas-av">{_esc(s[:1])}</span>'
 
 
 def _px(v) -> str:
@@ -1002,7 +1113,9 @@ def saas_simple_html(df: pd.DataFrame, money=(), pct=()) -> str:
     if df is None or df.empty:
         return '<div class="ptable-empty">No rows yet.</div>'
     cols = list(df.columns)
-    th = "".join(f'<th{" class=num" if c in money or c in pct else ""}>{_esc(c)}</th>' for c in cols)
+    def _is_num(c):
+        return c in money or c in pct or pd.api.types.is_numeric_dtype(df[c])
+    th = "".join(f'<th{" class=num" if _is_num(c) else ""}>{_esc(c)}</th>' for c in cols)
     rows = []
     for _, r in df.iterrows():
         tds = []
@@ -1020,7 +1133,16 @@ def saas_simple_html(df: pd.DataFrame, money=(), pct=()) -> str:
                 except (TypeError, ValueError):
                     tds.append(_td(str(c), _esc(v), "num"))
             else:
-                tds.append(_td(str(c), _esc(v)))
+                if v is None or (isinstance(v, float) and not np.isfinite(v)):
+                    shown = "—"
+                elif isinstance(v, (float, np.floating)):
+                    shown = f"{float(v):,.0f}" if float(v).is_integer() else f"{float(v):,.2f}"
+                elif isinstance(v, (int, np.integer)) and not isinstance(v, bool):
+                    shown = f"{int(v):,}"
+                else:
+                    shown = _esc(v)
+                num = isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool)
+                tds.append(_td(str(c), shown, "num" if num else ""))
         rows.append("<tr>" + "".join(tds) + "</tr>")
     return (f'<div class="saas-wrap"><table class="saas-table"><thead><tr>{th}</tr></thead>'
             f'<tbody>{"".join(rows)}</tbody></table></div>')
@@ -2843,7 +2965,7 @@ def action_panel(book: jn.Book | None, plan: pd.DataFrame, pending: pd.DataFrame
         else:
             st.caption(f"**{total} thing(s) to do** this week.")
         if n_draft:
-            st.info(f"⏳ **{n_draft} draft buy(s)** still waiting to be confirmed.")
+            st.info(f"**{n_draft} draft buy(s)** still waiting to be confirmed.")
 
         if n_buy:
             st.markdown("##### Buy")
@@ -3554,7 +3676,7 @@ def tab_buys(s: dict) -> None:
     ref = rs_mod.rs_raw(uclose, asof)["rs_raw"]
     cand_rs = rs_mod.rs_raw(close_d[[c for c in cands if c in close_d.columns]], asof)
     if len(ref) < 30:
-        st.caption(f"⚠ Only {len(ref)} universe stocks could be rated, so RS is measured "
+        st.caption(f":material/warning: Only {len(ref)} universe stocks could be rated, so RS is measured "
                    "against the candidates themselves.")
         ref = pd.concat([ref, cand_rs["rs_raw"]])
     scored["rs_raw"] = cand_rs["rs_raw"].reindex(scored.index)
@@ -3647,8 +3769,8 @@ def tab_buys(s: dict) -> None:
         raw_pick = str(r.get("pick") or "")
         pick_label = {"{?}": "no sector yet"}.get(raw_pick, raw_pick)
         gate_s = str(r.get("gate") or "")
-        gate_label = {"pass": "✅ pass", "unknown": "⚠ data nahi",
-                      "fail": "❌ fail"}.get(gate_s, "—")
+        gate_label = {"pass": "Pass", "unknown": "No data (passes)",
+                      "fail": "Fail"}.get(gate_s, "—")
         hist = f"listed {n_days // 5}w" if 0 < n_days < settled else ""
         rs_val = r.get("rs_rating")
         dl_val = r.get("delivery_pct")
@@ -3749,7 +3871,7 @@ def tab_buys(s: dict) -> None:
            else " — fundamentals gate is off (switch on Fundamentals analysis)")
         + ". Strict: a rule is never broken to fill the list.")
     if "gate" in scored.columns:
-        st.caption("Gate ⚠ *data nahi* = not enough statements to check; it passes. "
+        st.caption("Gate *No data* = not enough statements to check; it passes. "
                    + fund_mod.GATE_NOT_YET.capitalize() + ".")
     if s.get("diversify"):
         st.caption("Sectors in this list: "
@@ -3896,11 +4018,11 @@ def _curve_health_note(eq: pd.Series) -> None:
     gap = float(eq.attrs.get("reconcile_gap", 0.0) or 0.0)
     unpriced = eq.attrs.get("unpriced") or []
     if abs(gap) > max(100.0, abs(float(eq.iloc[-1])) * 0.001):
-        st.caption(f"⚠ The day-by-day curve is {_signed_rupees(gap)} away from the live "
+        st.caption(f":material/warning: The day-by-day curve is {_signed_rupees(gap)} away from the live "
                    "book. Something changed the book without a dated ledger entry — "
                    "Today / 5-day P&L may be off by about that much.")
     if unpriced:
-        st.caption("⚠ No price history for " + ", ".join(unpriced)
+        st.caption(":material/warning: No price history for " + ", ".join(unpriced)
                    + " — valued at the last fill price on the days it was held.")
 
 
@@ -3915,7 +4037,7 @@ def tab_positions(s: dict) -> None:
     # without waiting for prices; the last refresh's marks are reused if there
     # were any, which is what makes the drift column work
     if book.drafts:
-        st.info(f"⏳ **{len(book.drafts)} draft buy(s)** waiting — confirm them on the "
+        st.info(f"**{len(book.drafts)} draft buy(s)** waiting — confirm them on the "
                 "*This week's buys* tab.")
     if not book.positions:
         st.info("No confirmed positions yet. Queue buys on *This week's buys*, then confirm "
@@ -4171,8 +4293,10 @@ def charges_ui(book: jn.Book, rt: pd.DataFrame) -> None:
                        else f"{month}: removed.")
             st.rerun()
         if book.charges:
-            show_df(pd.DataFrame([{"Month": c["month"], "Charges ₹": c["amount"],
-                                   "Note": c.get("note") or ""} for c in book.charges]))
+            st.markdown(saas_simple_html(
+                pd.DataFrame([{"Month": c["month"], "Charges": c["amount"],
+                               "Note": c.get("note") or "—"} for c in book.charges]),
+                money=("Charges",)), unsafe_allow_html=True)
             st.caption(f"Total charges entered: **{rupees(book.total_charges())}**")
     with t_net:
         realised: dict[str, float] = {}
