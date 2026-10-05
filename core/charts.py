@@ -25,19 +25,25 @@ import plotly.graph_objects as go
 # theme
 # --------------------------------------------------------------------------- #
 LIGHT = {
-    "surface": "#ffffff",
-    "plane": "#f4f6f8",
-    "text": "#111827",
-    "text2": "#4b5563",
-    "muted": "#6b7280",
-    "grid": "#e5e7eb",
-    "axis": "#d1d5db",
-    "series": ["#2563eb", "#ea580c", "#059669", "#d97706", "#db2777", "#16a34a", "#4f46e5", "#dc2626"],
-    "pos": "#059669",
-    "neg": "#dc2626",
-    "mid": "#f3f4f6",
-    "good": "#059669",
-    "critical": "#dc2626",
+    # the app's design tokens, for Plotly
+    "surface": "#FFFFFF",
+    "plane": "#F8FAFC",
+    "text": "#1A2233",
+    "text2": "#475569",
+    "muted": "#64748B",
+    "grid": "#EDF1F5",
+    "axis": "#E3E8EF",
+    "accent": "#2B59C3",
+    # categorical, colour-vision safe, muted: accent blue first
+    "series": ["#2B59C3", "#D9822B", "#0F7B55", "#7A5AC8", "#64748B", "#B08900", "#2C8C9E", "#B93A32"],
+    "pos": "#0F7B55",
+    "neg": "#B93A32",
+    "mid": "#F1F4F8",
+    "good": "#0F7B55",
+    "critical": "#B93A32",
+    "pos_fill": "rgba(15,123,85,0.10)",
+    "neg_fill": "rgba(185,58,50,0.10)",
+    "accent_fill": "rgba(43,89,195,0.08)",
 }
 
 def theme() -> dict:
@@ -45,7 +51,44 @@ def theme() -> dict:
     return LIGHT
 
 
-FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
+FONT = 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif'
+
+
+def style(fig: go.Figure, height: int | None = None, ytitle: str | None = None,
+          xtitle: str | None = None, hover: str = "x unified") -> go.Figure:
+    """The house look for any figure built in the app: white plot, Inter,
+    horizontal gridlines only, quiet axis text, a white hover card, no
+    in-chart title (the card around the chart carries the title)."""
+    t = LIGHT
+    fig.update_layout(
+        template="plotly_white",
+        paper_bgcolor=t["surface"], plot_bgcolor=t["surface"],
+        font=dict(family=FONT, color=t["text2"], size=12),
+        margin=dict(l=8, r=8, t=16, b=8),
+        hovermode=hover,
+        hoverlabel=dict(bgcolor=t["surface"], bordercolor=t["axis"],
+                        font=dict(family=FONT, color=t["text"], size=12)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1,
+                    bgcolor="rgba(0,0,0,0)", font=dict(color=t["text2"], size=11)),
+        bargap=0.45,
+    )
+    try:
+        fig.update_layout(barcornerradius=4)
+    except Exception:                                          # older Plotly
+        pass
+    if height:
+        fig.update_layout(height=height)
+    fig.update_xaxes(showgrid=False, zeroline=False, linecolor=t["axis"],
+                     tickfont=dict(color=t["muted"], size=11),
+                     title_font=dict(color=t["muted"], size=11))
+    fig.update_yaxes(gridcolor=t["grid"], zeroline=False, linecolor="rgba(0,0,0,0)",
+                     tickfont=dict(color=t["muted"], size=11),
+                     title_font=dict(color=t["muted"], size=11))
+    if ytitle is not None:
+        fig.update_yaxes(title_text=ytitle)
+    if xtitle is not None:
+        fig.update_xaxes(title_text=xtitle)
+    return fig
 
 
 def _base(fig: go.Figure, t: dict, title: str, height: int = 420, ytitle: str = "") -> go.Figure:
@@ -172,7 +215,7 @@ def monthly_heatmap(table: pd.DataFrame, title: str = "Monthly returns (%)") -> 
         z=z,
         x=list(table.columns),
         y=[str(i) for i in table.index],
-        colorscale=[[0.0, t["neg"]], [0.5, t["mid"]], [1.0, t["pos"]]],
+        colorscale=[[0.0, t["neg"]], [0.5, t["mid"]], [1.0, t["accent"]]],
         zmid=0, zmin=-lim, zmax=lim,
         text=text, texttemplate="%{text}",
         textfont=dict(size=11, family=FONT),

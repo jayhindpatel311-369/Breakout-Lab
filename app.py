@@ -443,7 +443,7 @@ def inject_css() -> None:
                   margin: 4px 0 10px; }
         .card-sub { font-size: 13px; font-weight: 400; color:var(--text-3); margin: -6px 0 12px; }
 
-        div[data-testid="stVerticalBlockBorderWrapper"] {
+        [class*="st-key-card_"], div[data-testid="stVerticalBlockBorderWrapper"] {
             background: var(--surface) !important;
             border: 1px solid var(--border) !important;
             border-radius: var(--r-lg) !important;
@@ -492,6 +492,7 @@ def inject_css() -> None:
             background: var(--surface); box-shadow: var(--shadow-xs);
         }
         div[data-testid="stDataFrame"] [data-testid="stDataFrameResizable"] { background: var(--surface); }
+        [class*="st-key-card_"] div[data-testid="stDataFrame"],
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stDataFrame"] {
             border: none; box-shadow: none; border-radius: var(--r-md);
         }
@@ -502,11 +503,16 @@ def inject_css() -> None:
         .cal-kpis { display:flex; gap:0; border-bottom:1px solid var(--divider); margin:0 -20px 14px;
                     padding:0 8px 14px; overflow-x:auto; }
         .cal-kpi { flex:1; min-width:118px; padding:4px 14px; border-right:1px solid var(--divider); }
+        .stat-strip { background: var(--surface); border: 1px solid var(--border);
+                      border-radius: var(--r-lg); box-shadow: var(--shadow-xs);
+                      padding: 14px 6px 4px; margin: 0 0 16px; }
+        .stat-strip .cal-kpis { margin: 0; padding: 0 0 10px; border-bottom: none; flex-wrap: wrap; row-gap: 12px; }
         .cal-kpi:last-child { border-right:none; }
-        .cal-kpi .k { font-size:10px; letter-spacing:.08em; text-transform:uppercase;
-                      color:var(--text-3); font-weight:650; margin-bottom:6px; }
-        .cal-kpi .v { font-size:20px; font-weight:700; color:var(--text-1); line-height:1.15; letter-spacing:-.03em; }
-        .cal-kpi .s { font-size:11px; color:var(--text-3); margin-top:3px; }
+        .cal-kpi .k { font-size:11.5px; letter-spacing:.04em; text-transform:uppercase;
+                      color:var(--text-3); font-weight:600; margin-bottom:6px; }
+        .cal-kpi .v { font-size:20px; font-weight:650; color:var(--text-1); line-height:1.2;
+                      letter-spacing:-.02em; font-variant-numeric: tabular-nums; }
+        .cal-kpi .s { font-size:12px; color:var(--text-3); margin-top:3px; }
         .cal-kpi .v.pos { color:var(--pos); }
         .cal-kpi .v.neg { color:var(--neg); }
         .cal-title { font-size:11px; font-weight:700; letter-spacing:.1em;
@@ -819,7 +825,7 @@ def inject_css() -> None:
                 margin-left: 0 !important;
                 width: 100% !important;
             }
-            div[data-testid="stVerticalBlockBorderWrapper"] {
+            [class*="st-key-card_"], div[data-testid="stVerticalBlockBorderWrapper"] {
                 padding: 8px 10px 12px !important;
             }
             [data-testid="stFileUploader"] { padding: 12px; }
@@ -912,12 +918,31 @@ def page_head(title: str, sub: str = "") -> None:
 
 @contextmanager
 def card(title: str = "", sub: str = ""):
-    """White rounded panel. Widgets inside inherit the mix design system."""
-    with st.container(border=True):
+    """White rounded panel. Widgets inside inherit the design system.
+
+    Each card gets a run-scoped key so the CSS can find it: Streamlit 1.5x+
+    gives a bordered container no stable test id of its own, but it does turn a
+    key into an `st-key-<key>` class. The counter restarts every run (main()),
+    so the same card gets the same key on every rerun.
+    """
+    st.session_state["_card_seq"] = st.session_state.get("_card_seq", 0) + 1
+    with st.container(border=True, key=f"card_{st.session_state['_card_seq']}"):
         if title:
             extra = f'<div class="card-sub">{sub}</div>' if sub else ""
             st.markdown(f'<div class="card-h">{title}</div>{extra}', unsafe_allow_html=True)
         yield
+
+
+def stat_strip(items) -> None:
+    """Secondary numbers in one card, divided by hairlines — the calendar's KPI
+    strip, reused. Values are coloured only when they mean profit or loss."""
+    bits = []
+    for lab, val, sub, tone in items:
+        tone = tone if tone in ("pos", "neg") else ""
+        bits.append(f'<div class="cal-kpi"><div class="k">{lab}</div>'
+                    f'<div class="v {tone}">{val}</div><div class="s">{sub}</div></div>')
+    st.markdown('<div class="stat-strip"><div class="cal-kpis">' + "".join(bits) + "</div></div>",
+                unsafe_allow_html=True)
 
 
 def tiles_row(items) -> None:
@@ -3087,33 +3112,25 @@ def equity_figure(equity: pd.Series, bench: pd.Series | None,
         tickprefix = ""
         tickformat = "+,.2f"
         fill = "tozeroy"
-        fillcolor = "rgba(5,150,105,0.12)"
+        fillcolor = t["accent_fill"]
     else:
         title = "Portfolio (₹)"
         hover = "₹%{y:,.0f}"
         tickprefix = "₹"
         tickformat = ",.0f"
         fill = "tonexty"
-        fillcolor = "rgba(5,150,105,0.10)"
+        fillcolor = t["accent_fill"]
     fig.add_trace(go.Scatter(
         x=equity.index, y=y, name="Strategy",
-        line=dict(color="#059669", width=2.4),
+        line=dict(color=t["accent"], width=2),
         fill="tozeroy" if pct else None,
         fillcolor=fillcolor if pct else None,
         hovertemplate="%{x|%d %b %Y}<br>" + hover + "<extra></extra>",
     ))
     ymin, ymax = float(np.nanmin(y)), float(np.nanmax(y))
     pad = max((ymax - ymin) * 0.2, (1.0 if pct else abs(ymin) * 0.002) or 1)
-    fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-        margin=dict(l=10, r=10, t=30, b=10), height=380,
-        yaxis=dict(gridcolor="#e5e7eb", title=title,
-                   tickprefix=(tickprefix),
-                   tickformat=tickformat,
-                   range=[ymin - pad, ymax + pad]),
-        xaxis=dict(gridcolor="#e5e7eb"),
-    )
+    ch.style(fig, height=340, ytitle=title)
+    fig.update_yaxes(tickprefix=tickprefix, tickformat=tickformat, range=[ymin - pad, ymax + pad])
     return fig
 
 
@@ -3122,18 +3139,12 @@ def drawdown_figure(equity: pd.Series) -> go.Figure:
     dd = M.drawdown_series(equity) * 100
     fig = go.Figure(go.Scatter(x=dd.index, y=dd.values, fill="tozeroy",
                                 line=dict(color=t["critical"], width=1.4),
-                                fillcolor="rgba(220,38,38,0.12)",
+                                fillcolor=t["neg_fill"],
                                 hovertemplate="%{x|%d %b %Y}<br>%{y:.2f}%<extra></extra>"))
     ymin, ymax = float(dd.min()), float(dd.max())
     pad = max(0.15, (ymax - ymin) * 0.2 if ymax != ymin else 0.4)
-    fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-        margin=dict(l=10, r=10, t=30, b=10), height=220,
-        yaxis=dict(gridcolor="#e5e7eb", title="Drawdown %",
-                   range=[ymin - pad, ymax + pad]),
-        xaxis=dict(gridcolor="#e5e7eb"),
-    )
+    ch.style(fig, height=240, ytitle="Drawdown %")
+    fig.update_yaxes(range=[ymin * 1.15 - 0.5, max(0.5, ymax)])
     return fig
 
 
@@ -3242,22 +3253,17 @@ def weekly_pnl_figure(rt: pd.DataFrame) -> go.Figure:
     t = ch.theme()
     fig = go.Figure()
     if rt is None or rt.empty:
-        fig.update_layout(template="plotly_white", height=220)
-        return fig
+        return ch.style(fig, height=220)
     d = rt.copy()
     d["exit_date"] = pd.to_datetime(d["exit_date"])
     d["week"] = d["exit_date"].dt.to_period("W-FRI").astype(str)
     g = d.groupby("week", as_index=False)["P&L"].sum()
     colors = [t["good"] if v >= 0 else t["critical"] for v in g["P&L"]]
-    fig.add_trace(go.Bar(x=g["week"], y=g["P&L"], marker_color=colors, name="Weekly P&L"))
-    fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor=t["surface"], plot_bgcolor=t["surface"],
-        margin=dict(l=10, r=10, t=24, b=10), height=260,
-        yaxis=dict(gridcolor=t["grid"], title="P&L (₹)"),
-        xaxis=dict(gridcolor=t["grid"], title="Week ending Friday"),
-        showlegend=False,
-    )
+    fig.add_trace(go.Bar(x=g["week"], y=g["P&L"], marker_color=colors, name="Weekly P&L",
+                         width=[0.3] * len(g) if len(g) < 4 else None,
+                         hovertemplate="%{x}<br>₹%{y:,.0f}<extra></extra>"))
+    ch.style(fig, height=240, ytitle="P&L (₹)", xtitle="Week ending Friday")
+    fig.update_layout(showlegend=False)
     return fig
 
 
@@ -3265,19 +3271,16 @@ def donut_figure(title: str, labels, values, colors, center: str) -> go.Figure:
     t = ch.theme()
     fig = go.Figure(go.Pie(
         labels=list(labels), values=list(values), hole=0.68,
-        marker=dict(colors=list(colors)),
+        marker=dict(colors=list(colors), line=dict(color=t["surface"], width=2)),
         textinfo="none",
         hoverinfo="label+value+percent",
     ))
+    ch.style(fig, height=220, hover="closest")
     fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor=t["surface"], plot_bgcolor=t["surface"],
-        margin=dict(l=10, r=10, t=36, b=10), height=220,
-        title=dict(text=title, font=dict(size=13, color=t["text"])),
         showlegend=True,
-        legend=dict(orientation="h", y=-0.08, x=0.15),
-        annotations=[dict(text=center, x=0.5, y=0.5, font=dict(size=16, color=t["text"]),
-                          showarrow=False)],
+        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"),
+        annotations=[dict(text=center, x=0.5, y=0.5, showarrow=False,
+                          font=dict(size=18, color=t["text"], family=ch.FONT))],
     )
     return fig
 
@@ -3296,15 +3299,12 @@ def exit_reason_figure(rb: pd.DataFrame) -> go.Figure:
         y = rb.iloc[:, 0].astype(str)
         x = rb[col] if col in rb.columns else rb.iloc[:, -1]
     colors = [t["good"] if float(v) >= 0 else t["critical"] for v in x]
-    fig.add_trace(go.Bar(x=x, y=y, orientation="h", marker_color=colors))
-    fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor=t["surface"], plot_bgcolor=t["surface"],
-        margin=dict(l=10, r=10, t=10, b=10), height=max(180, 28 * len(y) + 60),
-        xaxis=dict(gridcolor=t["grid"], title="P&L (₹)"),
-        yaxis=dict(autorange="reversed"),
-        showlegend=False,
-    )
+    fig.add_trace(go.Bar(x=x, y=y, orientation="h", marker_color=colors,
+                         hovertemplate="%{y}<br>₹%{x:,.0f}<extra></extra>"))
+    ch.style(fig, height=max(180, 32 * len(y) + 60), xtitle="P&L (₹)", hover="closest")
+    fig.update_xaxes(showgrid=True, gridcolor=ch.theme()["grid"])
+    fig.update_yaxes(showgrid=False, autorange="reversed")
+    fig.update_layout(showlegend=False)
     return fig
 
 
@@ -4124,43 +4124,42 @@ def tab_positions(s: dict) -> None:
         sub = sub_ok if w["sessions"] >= (5 if "5" in lab else 1) else sub_short.format(w["sessions"])
         return (lab, _signed_rupees(w["pnl"]),
                 f"{w['pct']:+,.2f}% · {sub}", tone_of(w["pnl"]))
-    tiles_row([
-        _wp("Today P&L", td, "vs previous close (live)", "{} session(s)"),
-        _wp("Last 5 days P&L", d5, "5 trading days · live mark", "{} trading day(s) in book"),
-    ])
-    _curve_health_note(eq_pos)
+    today_t = _wp("Today P&L", td, "vs previous close (live)", "{} session(s)")
+    five_t = _wp("Last 5 days P&L", d5, "5 trading days · live mark", "{} trading day(s) in book")
+    # the four numbers you look at first, then everything else in one quiet strip
     tiles_row([
         ("Portfolio value", rupees(d["portfolio value"]),
          f"capital {rupees(book.capital)}", ""),
-        ("Capital deployed", rupees(d["deployed"]),
-         f"{d['deployed %']:,.1f}% working · {d['cash %']:,.1f}% cash", ""),
+        today_t,
         ("Unrealised P&L", rupees(d["unrealised"]),
          f"{d['unrealised %']:+,.2f}% on {rupees(d['cost'])} of cost"
          if np.isfinite(d["unrealised %"]) else "", tone_of(d["unrealised"])),
+        ("Open Risk", rupees(risk_total),
+         (f"{risk_pct_cap:,.2f}% of capital ({rupees(cap)})"
+          if np.isfinite(risk_pct_cap) else ""),
+         "neg" if risk_total > 0 else ""),
+    ])
+    stat_strip([
+        five_t,
+        ("Capital deployed", rupees(d["deployed"]),
+         f"{d['deployed %']:,.1f}% working · {d['cash %']:,.1f}% cash", ""),
         ("Up / down", f"{d['winners']} / {d['losers']}",
          f"{d['win share %']:,.0f}% of {d['positions']} in profit"
          if np.isfinite(d["win share %"]) else "", ""),
         ("Realised so far", rupees(d["realised so far"]),
-         f"{rupees(d['booked in open trades'])} of it from trades still open",
+         f"{rupees(d['booked in open trades'])} from open trades",
          tone_of(d["realised so far"])),
-    ])
-    tiles_row([
         ("Best open", (f"{d['best']['symbol']}" if d["best"] else "—"),
-         (f"{rupees(d['best']['pnl'])} · {d['best']['pct']:+,.1f}%" if d["best"] else ""),
-         tone_of(d["best"]["pnl"] if d["best"] else 0)),
+         (f"{d['best']['pct']:+,.1f}% · {rupees(d['best']['pnl'])}" if d["best"] else ""), ""),
         ("Worst open", (f"{d['worst']['symbol']}" if d["worst"] else "—"),
-         (f"{rupees(d['worst']['pnl'])} · {d['worst']['pct']:+,.1f}%" if d["worst"] else ""),
-         tone_of(d["worst"]["pnl"] if d["worst"] else 0)),
+         (f"{d['worst']['pct']:+,.1f}% · {rupees(d['worst']['pnl'])}" if d["worst"] else ""), ""),
         ("Biggest position", d["largest"] or "—",
          f"{d['largest %']:,.1f}% of the book" if np.isfinite(d["largest %"]) else "", ""),
-        ("Open Risk", rupees(risk_total),
-         (f"{risk_pct_cap:,.2f}% of capital ({rupees(cap)})"
-          if np.isfinite(risk_pct_cap) else ""),
-         "neg"),
         ("Avg weeks held",
          (f"{d['avg days held']/7:,.1f}" if np.isfinite(d["avg days held"]) else "—"),
-         "open positions · weekly holds", ""),
+         "open positions", ""),
     ])
+    _curve_health_note(eq_pos)
 
     last_day = panel["Close"].index[-1]
     trail_levels = {k: (v.loc[last_day] if last_day in v.index else pd.Series(dtype=float))
@@ -4526,10 +4525,8 @@ def tab_journal(s: dict) -> None:
                     x=mt["Month"], y=mt["P&L %"],
                     marker_color=[t["good"] if v >= 0 else t["critical"] for v in mt["P&L %"]],
                 ))
-                fig.update_layout(template="plotly_white", height=260,
-                                  yaxis_title="P&L %", showlegend=False,
-                                  margin=dict(l=10, r=10, t=10, b=10),
-                                  paper_bgcolor="#fff", plot_bgcolor="#fff")
+                ch.style(fig, height=240, ytitle="P&L %")
+                fig.update_layout(showlegend=False)
                 st.markdown("##### P&L vs month")
                 show_chart(fig)
 
@@ -4729,10 +4726,7 @@ def tab_journal(s: dict) -> None:
         st.markdown("##### Cash after every fill")
         t = ch.theme()
         fig = go.Figure(go.Scatter(x=eq.index, y=eq.values, line=dict(color=t["series"][0], width=2)))
-        fig.update_layout(template="plotly_white",
-                          paper_bgcolor=t["surface"], plot_bgcolor=t["surface"], height=260,
-                          margin=dict(l=10, r=10, t=20, b=10),
-                          yaxis=dict(gridcolor=t["grid"]), xaxis=dict(gridcolor=t["grid"]))
+        ch.style(fig, height=240)
         show_chart(fig)
 
     with st.expander("Danger zone"):
@@ -4787,12 +4781,8 @@ def tab_universe(s: dict) -> None:
     with card("How many stocks pass the screen over time"):
         t = ch.theme()
         fig = go.Figure(go.Scatter(x=res.counts.index, y=res.counts.values,
-                                    line=dict(color=t["series"][1], width=1.5)))
-        fig.update_layout(template="plotly_white",
-                          paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", height=260,
-                          margin=dict(l=10, r=10, t=20, b=10),
-                          yaxis=dict(gridcolor="#e5e7eb", title="Qualifying"),
-                          xaxis=dict(gridcolor="#e5e7eb"))
+                                    line=dict(color=t["accent"], width=1.6)))
+        ch.style(fig, height=240, ytitle="Qualifying")
         show_chart(fig)
 
     with card("Why each stock does or doesn't qualify, right now"):
@@ -4808,6 +4798,7 @@ def tab_universe(s: dict) -> None:
 # main
 # --------------------------------------------------------------------------- #
 def main() -> None:
+    st.session_state["_card_seq"] = 0
     hydrate_books_from_browser()
     s = sidebar()
     inject_css()
