@@ -66,7 +66,6 @@ from core import indices as ix_mod
 from core import journal as jn
 from core import journal_stats as js
 from core import corpact as ca
-from core import gainers as gn
 from core import params as pm
 from core import storage as sg
 import core.gvault as gv
@@ -100,6 +99,49 @@ def _now_ist() -> datetime:
     if _IST is not None:
         return datetime.now(_IST)
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+
+# Brokerage/charges assumptions for the live journal's Net P&L — a small
+# app-wide preference (not book data), same file the calendar's chosen year
+# already lives in. Defaults are Zerodha-style equity delivery: ₹0 brokerage,
+# STT 0.1% both legs, a small bundled rate for exchange charges/stamp
+# duty/SEBI fee/GST on all of those.
+_COST_DEFAULTS = {"cost_brokerage_pct": 0.0, "cost_stt_pct": 0.1, "cost_other_pct": 0.03}
+
+
+def _load_cost_assumptions() -> dict:
+    path = os.path.join(APP_DIR, "ui_prefs.json")
+    blob = {}
+    try:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                blob = json.load(f) or {}
+    except Exception:
+        blob = {}
+    return {
+        "brokerage_pct": float(blob.get("cost_brokerage_pct", _COST_DEFAULTS["cost_brokerage_pct"])),
+        "stt_pct": float(blob.get("cost_stt_pct", _COST_DEFAULTS["cost_stt_pct"])),
+        "other_pct": float(blob.get("cost_other_pct", _COST_DEFAULTS["cost_other_pct"])),
+    }
+
+
+def _save_cost_assumptions(brokerage_pct: float, stt_pct: float, other_pct: float) -> None:
+    path = os.path.join(APP_DIR, "ui_prefs.json")
+    blob = {}
+    try:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                blob = json.load(f) or {}
+    except Exception:
+        blob = {}
+    blob["cost_brokerage_pct"] = float(brokerage_pct)
+    blob["cost_stt_pct"] = float(stt_pct)
+    blob["cost_other_pct"] = float(other_pct)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(blob, f)
+    except Exception:
+        pass
 
 
 # Where the journal and the parameter sets live is a setting, not a constant —
@@ -1795,13 +1837,13 @@ def sidebar() -> dict:
                                                      key=f"trp{n}", label_visibility="collapsed"))
                 return float(g), float(q), mode, pct
 
-            g1, p1, m1, l1 = rung_ui(1, 25.0, 20.0)
-            g2, p2, m2, l2 = rung_ui(2, 50.0, 20.0)
+            g1, p1, m1, l1 = rung_ui(1, 25.0, 0.0)
+            g2, p2, m2, l2 = rung_ui(2, 50.0, 0.0)
             g3, p3_q, m3, l3 = rung_ui(3, 75.0, 0.0)
             g4, p4_q, m4, l4 = rung_ui(4, 100.0, 0.0)
 
             p_ema = st.number_input("Book on close below 20 EMA (%)", 0.0, 100.0,
-                                     pv("p_ema_book", 45.0), key="p_ema_book")
+                                     pv("p_ema_book", 100.0), key="p_ema_book")
             sl_full = st.toggle(
                 "20 EMA is a full stop-loss until the first profit books",
                 value=pv("p_sl_full", True), key="p_sl_full",
@@ -1899,7 +1941,7 @@ def sidebar() -> dict:
         with card("Market regime filter"):
             rg = RegimeConfig()
             rg.enabled = st.toggle("Stop new entries in a weak market",
-                                    value=pv("p_regime_on", True), key="p_regime_on")
+                                    value=pv("p_regime_on", False), key="p_regime_on")
             if rg.enabled:
                 _benches = list(uni_mod.BENCHMARK_CANDIDATES.keys())
                 bench_name = st.selectbox("Index to judge the market by", _benches,
@@ -2310,11 +2352,13 @@ def manage_ui(book: jn.Book) -> None:
     should not exist. Each is rare and each is destructive in its own way, so
     none of them belongs above the numbers you read every week.
     """
-    with card("Manage book", "Capital, restatement, manual add, corporate action, remove"):
+    with card("Manage book", "Capital, restatement, manual add, corporate action, "
+              "correct a fill, remove"):
         capital_ui(book)
         restated_ui(book)
         manual_add_ui(book)
         corpact_ui(book)
+        edit_fill_ui(book)
         remove_ui(book)
 
 
@@ -2411,14 +2455,63 @@ def remove_ui(book: jn.Book) -> None:
                            f"{rupees(back)} put back. Cash is now {rupees(book.cash)}.")
                 st.rerun()
 
-        if book.corrections:
+        removed = [r for r in book.corrections if r.get("what") == "position removed"]
+        if removed:
             st.markdown("###### What has been removed")
             show_df(pd.DataFrame([{
                 "when": r.get("when"), "symbol": r.get("symbol"),
                 "bought": r.get("entry_date"), "qty": r.get("qty"),
                 "price": r.get("entry_price"), "fills removed": r.get("fills_removed"),
                 "cash back": r.get("cash_restored"), "why": r.get("note") or "—",
-            } for r in reversed(book.corrections)]))
+            } for r in reversed(removed)]))
+
+
+def edit_fill_ui(book: jn.Book) -> None:
+    """Correct an exit's fill price after it has already been saved.
+
+    *Record these fills* lets you edit the price before saving — this is for
+    when the broker's actual print only turned out to differ afterwards (a
+    stale/live-quote mismatch, a slightly different close). Qty, date and rung
+    stay put; only price, and what follows from it, changes.
+    """
+    sells = [r for r in book.ledger if r.get("side") == "SELL"]
+    with st.expander("Correct an exit's fill price"):
+        st.caption("Not a new sale — this only corrects the price already recorded for a "
+                    "past exit, and recomputes its P&L and cash from the new number.")
+        if not sells:
+            st.caption("No recorded exits yet.")
+        else:
+            labels = [f"{r['symbol']} · sold {r['date']} · qty {r['qty']} · "
+                      f"₹{float(r['price']):.2f} · {r.get('reason') or r.get('rung')}"
+                      for r in sells]
+            pick = st.selectbox("Which fill", labels, key="ef_pick")
+            r = sells[labels.index(pick)]
+            new_px = st.number_input("Correct fill price (₹)", 0.01, 1e7,
+                                      float(r["price"]), format="%.4f", key="ef_px")
+            note = st.text_input("Why (kept in the log)", key="ef_note",
+                                  placeholder="broker's actual print, e.g. Zerodha")
+            if st.button("Save correction", key="ef_go"):
+                rec = book.edit_exit_fill(
+                    r["symbol"], r.get("entry_date"), r["date"], int(r["qty"]),
+                    float(r["price"]), str(r.get("rung", "")), float(new_px), note=note)
+                persist_book(book)
+                if rec:
+                    st.success(f"{r['symbol']}: fill corrected to ₹{new_px:.2f} · "
+                               f"P&L {rupees(rec['old_pnl'])} → {rupees(rec['new_pnl'])} · "
+                               f"cash adjusted {rupees(rec['cash_adjusted'])}.")
+                    st.rerun()
+                else:
+                    st.error("Could not find that exact fill — it may already have been "
+                             "corrected. Refresh and try again.")
+
+        corrected = [r for r in book.corrections if r.get("what") == "exit price corrected"]
+        if corrected:
+            st.markdown("###### What has been corrected")
+            show_df(pd.DataFrame([{
+                "when": r.get("when"), "symbol": r.get("symbol"), "sold": r.get("sell_date"),
+                "qty": r.get("qty"), "old price": r.get("old_price"), "new price": r.get("new_price"),
+                "old P&L": r.get("old_pnl"), "new P&L": r.get("new_pnl"), "why": r.get("note") or "—",
+            } for r in reversed(corrected)]))
 
 
 def manual_add_ui(book: jn.Book) -> None:
@@ -3780,12 +3873,22 @@ def tab_journal(s: dict) -> None:
     rb = js.exit_reasons(book)
     rt = js.round_trips(book)
     eq = js.equity_curve(book, close)
+    costs = js.cost_summary(book, **_load_cost_assumptions())
 
     tiles_row([
-        ("Net P&L", _signed_rupees(st_["Net P&L"]),
-         f"realised {rupees(st_['Realised P&L'])} · unrealised {_signed_rupees(st_['Unrealised P&L'])}"
+        ("Gross P&L", _signed_rupees(st_["Net P&L"]),
+         "ledger only — no brokerage/STT/charges yet", tone_of(st_["Net P&L"])),
+        ("Net P&L (after costs)", _signed_rupees(st_["Net P&L"] - costs["total costs"]),
+         f"− {rupees(costs['total costs'])} est. costs on {costs['trades']} exit(s) · "
+         "see Costs & net P&L tab", tone_of(st_["Net P&L"] - costs["total costs"])),
+        ("Realised P&L", _signed_rupees(st_["Realised P&L"]),
+         "booked exits, before costs", tone_of(st_["Realised P&L"])),
+        ("Unrealised P&L", _signed_rupees(st_["Unrealised P&L"]),
+         "open positions, marked to market"
          + (f" · dividends {rupees(st_['Dividends'])}" if st_.get("Dividends") else ""),
-         tone_of(st_["Net P&L"])),
+         tone_of(st_["Unrealised P&L"])),
+    ])
+    tiles_row([
         ("Overall ROI", f"{st_['ROI %']:+,.2f}%" if np.isfinite(st_["ROI %"]) else "—",
          f"on {rupees(st_['Capital'])}", tone_of(st_["ROI %"])),
         ("Win rate", f"{st_['Win rate %']:,.0f}%" if np.isfinite(st_["Win rate %"]) else "—",
@@ -3800,6 +3903,38 @@ def tab_journal(s: dict) -> None:
          "peak-to-trough of daily equity + live mark" if np.isfinite(st_["Max drawdown %"])
          else "needs prices", "neg"),
     ])
+
+    with card("Costs & net P&L", "Brokerage, STT and charges, estimated from the ledger"):
+        st.caption("The ledger has no transaction costs in it, so every P&L above this line "
+                   "is gross. This estimates what a contract note would show — percentage of "
+                   "traded value, same shape brokers bill in — and nets it against realised "
+                   "P&L. It is an estimate: edit the rates to match your own contract note.")
+        tiles_row([
+            ("Buy value", rupees(costs["buy value"]), f"{costs['trades']} exit(s) in the book", ""),
+            ("Sell value", rupees(costs["sell value"]), "", ""),
+            ("Est. total costs", rupees(costs["total costs"]),
+             f"buy {rupees(costs['buy costs'])} + sell {rupees(costs['sell costs'])}", "neg"),
+            ("Realised, after costs", _signed_rupees(costs["realised (after costs)"]),
+             f"gross {_signed_rupees(costs['realised (gross)'])}",
+             tone_of(costs["realised (after costs)"])),
+        ])
+        with st.expander("Edit the assumed rates"):
+            c1, c2, c3 = st.columns(3)
+            bp = c1.number_input("Brokerage % (per side)", 0.0, 5.0,
+                                  costs["brokerage_pct"], step=0.01, format="%.3f", key="cost_bp")
+            sp = c2.number_input("STT % (both sides, delivery)", 0.0, 5.0,
+                                  costs["stt_pct"], step=0.01, format="%.3f", key="cost_sp")
+            op = c3.number_input("Other % per side (exchange + stamp + SEBI + GST, bundled)",
+                                  0.0, 5.0, costs["other_pct"], step=0.01, format="%.3f", key="cost_op")
+            st.caption("Zerodha equity delivery defaults: brokerage ₹0, STT 0.1% on both legs. "
+                       "\"Other\" bundles exchange transaction charge (~0.003%), stamp duty "
+                       "(0.015%, buy side), SEBI fee and 18% GST on all of those — roughly "
+                       "0.03%/side is close for most books; check your contract note if it "
+                       "matters to you.")
+            if st.button("Save rates", key="cost_save"):
+                _save_cost_assumptions(bp, sp, op)
+                st.success("Saved — applies everywhere Net P&L is shown.")
+                st.rerun()
 
     age = st_.get("Book age (years)", np.nan)
     # Brokers (Zerodha Console etc.) annualise with
@@ -3999,6 +4134,25 @@ def tab_journal(s: dict) -> None:
         st.caption("Not a controlled experiment — a trade books a target *because* it went up. "
                    "Read it as a description of the two populations, not proof of cause.")
 
+    # ---- how far did it actually run, before you got out ------------------ #
+    if len(rt):
+        mfe = js.mfe_report(rt, close)
+        if not mfe["summary"].empty:
+            with card("How far closed trades ran before exit",
+                      "Highest daily close reached between entry and exit, vs what you actually "
+                      "booked — needs 'Load prices for the full analysis' above"):
+                show_df(mfe["summary"])
+                st.caption("\"Reached at least 100%\" counts every trade whose price touched "
+                           "100%+ at some point before it was finally exited — whatever rung "
+                           "actually sold it. A trade that peaked at 220% is counted in the "
+                           "100%, 150% and 200% rows too.")
+                with st.expander("Every closed trade"):
+                    show_df(mfe["detail"])
+                    st.caption("\"Left on the table\" = max gain reached − what you actually "
+                               "exited at, in percentage points. A big number here is the exit "
+                               "rule giving back a move that genuinely happened, not a missed "
+                               "trade.")
+
     # ---- index buckets ---------------------------------------------------- #
     if len(rt):
         syms = tuple(sorted(set(rt["symbol"]) | book.open_symbols()))
@@ -4188,77 +4342,6 @@ def tab_universe(s: dict) -> None:
                 st.write(", ".join(ctx["dropped"]))
 
 
-@st.cache_data(show_spinner=False, ttl=5 * 60)
-def load_live_prices(symbols: tuple[str, ...]):
-    return data_mod.live_last_prices(list(symbols))
-
-
-def tab_gainers(s: dict) -> None:
-    page_head("Today\u2019s top gainers",
-              f"Biggest % moves across the {len(s['symbols'])} symbols in your universe")
-
-    c1, c2, c3 = st.columns([1, 1, 2])
-    n = c1.number_input("How many", min_value=1, max_value=25, value=5, step=1,
-                        key="gainers_n")
-    min_px = c2.number_input("Min price (\u20b9)", min_value=0.0, value=0.0, step=10.0,
-                             key="gainers_min_px",
-                             help="Leave out penny stocks by their traded price.")
-    use_live = c3.toggle("Live prices (market hours)", value=not s["demo"],
-                         key="gainers_live", disabled=bool(s["demo"]),
-                         help="The price cache is end-of-day. During market hours this "
-                              "stamps Yahoo's latest print on today, so the list is "
-                              "today's move rather than yesterday's.")
-
-    if st.button(f"Show top {int(n)} gainers", type="primary", key="gainers_go"):
-        st.session_state["gainers_ran"] = True
-    if not st.session_state.get("gainers_ran"):
-        st.info("Press the button to rank today's moves.")
-        return
-
-    symbols = tuple(sorted(s["symbols"]))
-    if not symbols:
-        st.warning("The universe is empty — pick an index in the sidebar first.")
-        return
-    today = pd.Timestamp(_now_ist().date())
-    # three weeks back is plenty to find a previous close across any holiday run
-    start = today - pd.Timedelta(days=21)
-    with st.spinner(f"Loading prices for {len(symbols)} symbols…"):
-        panel, _shares = load_panel(symbols, str(start.date()), str(today.date()), s["demo"])
-    close = panel.get("Close", pd.DataFrame())
-    if close.empty:
-        st.error("No price data came back. Check the internet connection, or tick Demo mode.")
-        return
-    raw = panel.get("RawClose", close)
-
-    if use_live and not s["demo"]:
-        with st.spinner("Fetching live prices…"):
-            live = load_live_prices(tuple(close.columns))
-        if len(live):
-            close = data_mod.apply_live_mark(close, live)
-            raw = data_mod.apply_live_mark(raw, live)
-
-    top = gn.top_gainers(close, n=int(n), raw_close=raw, min_price=float(min_px))
-    as_of, prev = top.attrs.get("as_of"), top.attrs.get("prev_date")
-    if as_of is not None:
-        st.caption(f"Move on **{as_of.date()}** against the close of **{prev.date()}**"
-                   + ("" if as_of.date() == today.date() else " · today has no price bar yet"))
-    if top.empty:
-        st.warning("No stock in the universe is up on this bar.")
-        return
-
-    best = top.iloc[0]
-    tiles_row([
-        ("Top gainer", str(best["Symbol"]), f"{best['Change %']:+.2f}%", "pos"),
-        ("Avg of top list", f"{top['Change %'].mean():+.2f}%", f"{len(top)} stocks", "pos"),
-    ])
-    shown = top.copy()
-    for col in ("Prev close", "Close"):
-        shown[col] = shown[col].map(_px)
-    shown["Change"] = shown["Change"].map(lambda v: f"{v:+,.2f}")
-    shown.insert(0, "#", shown.index.astype(str))
-    st.markdown(saas_simple_html(shown, pct=("Change %",)), unsafe_allow_html=True)
-
-
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
@@ -4280,8 +4363,8 @@ def main() -> None:
         st.warning("**Demo mode is on.** Prices are synthetic. Nothing here means anything "
                    "about real stocks.")
 
-    t1, t2, t3, t4, t5, t6 = st.tabs([
-        "Backtest", "This week", "Positions", "Journal", "Top gainers", "Universe",
+    t1, t2, t3, t4, t5 = st.tabs([
+        "Backtest", "This week", "Positions", "Journal", "Universe",
     ])
     with t1:
         tab_backtest(s)
@@ -4292,8 +4375,6 @@ def main() -> None:
     with t4:
         tab_journal(s)
     with t5:
-        tab_gainers(s)
-    with t6:
         tab_universe(s)
 
 
