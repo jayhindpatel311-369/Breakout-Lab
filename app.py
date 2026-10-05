@@ -4249,8 +4249,6 @@ def tab_positions(s: dict) -> None:
          (f"{d['best']['pct']:+,.1f}% · {rupees(d['best']['pnl'])}" if d["best"] else ""), ""),
         ("Worst open", (f"{d['worst']['symbol']}" if d["worst"] else "—"),
          (f"{d['worst']['pct']:+,.1f}% · {rupees(d['worst']['pnl'])}" if d["worst"] else ""), ""),
-        ("Biggest position", d["largest"] or "—",
-         f"{d['largest %']:,.1f}% of the book" if np.isfinite(d["largest %"]) else "", ""),
         ("Avg weeks held",
          (f"{d['avg days held']/7:,.1f}" if np.isfinite(d["avg days held"]) else "—"),
          "open positions", ""),
