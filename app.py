@@ -316,7 +316,11 @@ def inject_css() -> None:
         }
         [data-testid="stTab"] p { font-size: 15px !important; font-weight: 600 !important; }
         [data-testid="stTab"]:hover { color: var(--text-1) !important; }
-        [data-testid="stTab"][aria-selected="true"] { color: var(--text-1) !important; }
+        [data-testid="stTab"][aria-selected="true"] { color: var(--accent) !important; }
+        [data-testid="stTabs"] > div > [role="tablist"] > [data-testid="stTab"][aria-selected="true"] {
+            background: var(--accent-soft) !important; border-radius: 8px 8px 0 0;
+            padding-left: 14px !important; padding-right: 14px !important;
+        }
         /* tabs inside a tab: a segmented control, so the hierarchy reads at a glance */
         [data-testid="stTabs"] [data-testid="stTabs"] [role="tablist"] {
             display: inline-flex !important; width: fit-content !important; gap: 4px; padding: 4px;
@@ -417,6 +421,9 @@ def inject_css() -> None:
         }
 
         h1, h2, h3, h4, h5 { color: var(--text-1) !important; letter-spacing: -0.02em; font-weight: 650 !important; }
+        .stMarkdown h5 { display: flex; align-items: center; gap: 9px; }
+        .stMarkdown h5::before { content: ""; width: 4px; height: 18px; border-radius: 2px;
+                                 background: linear-gradient(180deg, var(--accent), #6FA0F5); }
         .stCaption, .stCaption p { color: var(--text-3) !important; }
         .stRadio label, .stCheckbox label, .stToggle label { color: var(--text-1) !important; }
 
@@ -430,6 +437,10 @@ def inject_css() -> None:
         .app-top { display:flex; justify-content:space-between; align-items:center;
                    margin: 0 0 4px; gap: 12px; }
         .app-brand { display:flex; align-items:center; gap:10px; flex-wrap: wrap; }
+        .app-mark { width:32px; height:32px; border-radius:9px; display:inline-flex; align-items:center;
+                    justify-content:center; color:#fff; font-weight:700; font-size:12.5px;
+                    background: linear-gradient(135deg, #2B59C3, #5B8DEF);
+                    box-shadow: 0 2px 6px rgba(43,89,195,.30); }
         .demo-badge { display:inline-block; padding:3px 9px; border-radius:999px; font-size:12px;
                       font-weight:600; background: var(--warn-soft); color: var(--warn);
                       border: 1px solid var(--warn-border); }
@@ -461,20 +472,38 @@ def inject_css() -> None:
             border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--surface);
         }
         .sb-sec { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
-                  color: var(--text-3); background: var(--surface-muted); border: 1px solid var(--divider);
+                  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border);
                   border-radius: 10px; padding: 8px 12px; margin: 14px 0 8px; }
 
         .tile {
-            background: var(--surface);
+            background:
+              radial-gradient(140px 96px at 100% 0%, rgba(147,183,250,.42), transparent 64%),
+              radial-gradient(110px 84px at 0% 100%, rgba(134,239,172,.20), transparent 60%),
+              var(--surface);
             border: 1px solid var(--border);
             border-radius: var(--r-lg);
             padding: 16px 18px 14px;
             height: 100%;
-            box-shadow: var(--shadow-xs);
+            box-shadow: 0 1px 3px rgba(16,24,40,.05);
         }
-        .tile-label { font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
-                      color: var(--text-3); margin-bottom: 8px; font-weight: 600; }
-        .tile-value { font-size: 24px; font-weight: 650; color: var(--text-1); line-height: 1.2;
+        .tile.tile-good {
+            background: radial-gradient(150px 100px at 100% 0%, rgba(110,231,183,.50), transparent 64%),
+                        radial-gradient(110px 80px at 0% 100%, rgba(167,243,208,.22), transparent 60%),
+                        var(--surface);
+            border-color: #CFEBDD;
+        }
+        .tile.tile-bad {
+            background: radial-gradient(150px 100px at 100% 0%, rgba(252,165,165,.48), transparent 64%),
+                        radial-gradient(110px 80px at 0% 100%, rgba(254,202,202,.20), transparent 60%),
+                        var(--surface);
+            border-color: #F3D3D0;
+        }
+        .tile-label { font-size: 12px; letter-spacing: .05em; text-transform: uppercase;
+                      color: var(--text-3); margin-bottom: 8px; font-weight: 600;
+                      display: flex; align-items: center; gap: 9px; }
+        .tile.tile-good .tile-label { color: var(--pos); }
+        .tile.tile-bad .tile-label { color: var(--neg); }
+        .tile-value { font-size: 26px; font-weight: 700; color: var(--text-1); line-height: 1.2;
                       letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
         .tile-value.pos { color: var(--pos); }
         .tile-value.neg { color: var(--neg); }
@@ -503,7 +532,10 @@ def inject_css() -> None:
         .cal-kpis { display:flex; gap:0; border-bottom:1px solid var(--divider); margin:0 -20px 14px;
                     padding:0 8px 14px; overflow-x:auto; }
         .cal-kpi { flex:1; min-width:118px; padding:4px 14px; border-right:1px solid var(--divider); }
-        .stat-strip { background: var(--surface); border: 1px solid var(--border);
+        .stat-strip { background: radial-gradient(260px 120px at 100% 0%, rgba(147,183,250,.30), transparent 66%),
+                                  radial-gradient(220px 100px at 0% 100%, rgba(134,239,172,.14), transparent 62%),
+                                  var(--surface);
+                      border: 1px solid var(--border);
                       border-radius: var(--r-lg); box-shadow: var(--shadow-xs);
                       padding: 14px 6px 4px; margin: 0 0 16px; }
         .stat-strip .cal-kpis { margin: 0; padding: 0 0 10px; border-bottom: none; flex-wrap: wrap; row-gap: 12px; }
@@ -543,7 +575,7 @@ def inject_css() -> None:
         .ptable th { text-align: left; font-size: 12px; letter-spacing: .03em;
                      text-transform: uppercase; color: var(--text-3); font-weight: 600;
                      padding: 9px 10px; border-bottom: 1px solid var(--border);
-                     background: var(--surface-muted); }
+                     background: #F1F5FD; color: #4A5E86; }
         .ptable tbody tr:hover td { background: var(--surface-muted); }
         .ptable td { padding: 9px 10px; border-bottom: 1px solid var(--divider); color: var(--text-1);
                      font-size: 13px; }
@@ -556,7 +588,7 @@ def inject_css() -> None:
         .saas-table th {
             text-align:left; font-size:12px; letter-spacing:.03em; text-transform:uppercase;
             color:var(--text-3); font-weight:600; padding:10px 12px; border-bottom:1px solid var(--border);
-            white-space:nowrap; background: var(--surface-muted);
+            white-space:nowrap; background: #F1F5FD; color: #4A5E86;
         }
         .saas-table th:first-child { border-top-left-radius: var(--r-md); }
         .saas-table th:last-child { border-top-right-radius: var(--r-md); }
@@ -576,10 +608,11 @@ def inject_css() -> None:
         .saas-table tr:last-child td { border-bottom:none; }
         .saas-table td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
         .saas-stock { display:flex; gap:10px; align-items:center; }
-        .saas-av { width:32px; height:32px; min-width:32px; border-radius:50%;
+        .saas-av { width:34px; height:34px; min-width:34px; border-radius:50%;
                    display:inline-flex; align-items:center; justify-content:center;
-                   font-weight:600; color:var(--text-2); background:var(--bg-sunken);
-                   font-size:13px; letter-spacing:-.01em; }
+                   font-weight:700; color:#fff; background:var(--accent);
+                   font-size:13px; letter-spacing:-.01em;
+                   box-shadow: 0 1px 2px rgba(16,24,40,.12); }
         .saas-sym { font-weight:700; letter-spacing:-.02em; line-height:1.2; }
         .saas-sub { font-size:12px; color:var(--text-3); margin-top:2px; }
         .saas-next { font-size:12px; color:var(--text-2); max-width:160px; line-height:1.35; }
@@ -664,10 +697,16 @@ def inject_css() -> None:
         .act-banner {
             border-radius: var(--r-xl); padding: 18px 20px 14px 22px; margin: 4px 0 16px;
             border: 1px solid var(--border); background: var(--surface);
-            box-shadow: var(--shadow-xs); border-left: 3px solid var(--border-strong);
+            box-shadow: 0 1px 3px rgba(16,24,40,.05); border-left: 4px solid var(--accent);
         }
-        .act-banner.hot { border-left-color: var(--neg); }
-        .act-banner.ok { border-left-color: var(--pos); }
+        .act-banner.hot {
+            background: radial-gradient(460px 170px at 100% 0%, rgba(254,202,202,.50), transparent 70%), var(--surface);
+            border-color: #F3D3D0; border-left-color: var(--neg);
+        }
+        .act-banner.ok {
+            background: radial-gradient(460px 170px at 100% 0%, rgba(167,243,208,.45), transparent 70%), var(--surface);
+            border-color: #CFEBDD; border-left-color: var(--pos);
+        }
         .act-kicker { font-size:11px; letter-spacing:.1em; text-transform:uppercase;
                       font-weight:700; color:var(--text-3); margin-bottom:4px; }
         .act-banner.hot .act-kicker { color:var(--neg); }
@@ -902,6 +941,58 @@ def inject_css() -> None:
     )
 
 
+_ICON_PATHS = {
+    "wallet": '<path d="M3 7h15a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z"/><path d="M3 7l12-4v4"/><circle cx="16.5" cy="13.5" r="1.2"/>',
+    "trend": '<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+    "shield": '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+    "pie": '<path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
+    "updown": '<path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/>',
+    "check": '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
+    "star": '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>',
+    "clock": '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    "chart": '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    "percent": '<path d="M19 5L5 19"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/>',
+    "layers": '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+}
+# which metric gets which icon (keys are tile labels, slugged as in tile())
+_TILE_ICONS = {
+    "portfolio-value": "wallet", "today-p-l": "trend", "unrealised-p-l": "trend",
+    "open-risk": "shield", "gross-p-l": "trend", "net-p-l--after-charges": "wallet",
+    "realised-p-l": "check", "overall-roi": "percent", "win-rate": "check",
+    "profit-factor": "chart", "max-drawdown": "shield", "cagr": "percent",
+    "expectancy": "chart", "avg-win---avg-loss": "updown", "trades-closed": "check",
+    "calmar": "chart", "best-month": "star", "max-winning-streak": "trend",
+    "max-losing-streak": "updown", "win-streak-now": "star", "final-value": "wallet",
+    "universe": "layers", "lookback": "clock", "new-entries---week": "star",
+    "trail---final-ema": "trend", "capital": "wallet", "total-return": "percent",
+    "max-dd": "shield", "trades": "check",
+}
+
+
+def _tile_icon_css() -> str:
+    """Coloured icon chips on the metric tiles — blue, or green/red when the
+    tile carries a gain or a loss. Built once; pure CSS, no extra HTML."""
+    from urllib.parse import quote
+
+    def uri(path: str, colour: str) -> str:
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
+               f'stroke="{colour}" stroke-width="2" stroke-linecap="round" '
+               f'stroke-linejoin="round">{path}</svg>')
+        return 'url("data:image/svg+xml;utf8,' + quote(svg) + '")'
+
+    tones = {"": ("#E6EDFB", "#2B59C3"), ".tile-good": ("#D9F2E6", "#0F7B55"),
+             ".tile-bad": ("#FBE1DF", "#B93A32")}
+    rules = ['.tile[data-k] .tile-label::before { content:""; display:none; width:28px; height:28px; '
+             'min-width:28px; border-radius:8px; background-repeat:no-repeat; '
+             'background-position:center; background-size:15px 15px; }']
+    for key, icon in _TILE_ICONS.items():
+        rules.append(f'.tile[data-k="{key}"] .tile-label::before {{ display:inline-block; }}')
+        for cls, (bg, fg) in tones.items():
+            rules.append(f'.tile{cls}[data-k="{key}"] .tile-label::before '
+                         f'{{ background-color:{bg}; background-image:{uri(_ICON_PATHS[icon], fg)}; }}')
+    return "\n".join(rules)
+
+
 def tile(label: str, value: str, sub: str = "", tone: str = "") -> str:
     kind = " tile-good" if tone == "pos" else (" tile-bad" if tone == "neg" else "")
     valcls = f" {tone}" if tone else ""
@@ -975,10 +1066,14 @@ def _td(label: str, inner: str, cls: str = "") -> str:
             f'<span class="m-val">{inner}</span></td>')
 
 
+_AVATAR = ["#2B59C3", "#7C4DDB", "#0E8BA8", "#0F7B55", "#C77A12",
+           "#C2453B", "#C2407F", "#4F55D9", "#127A72", "#A85A14"]
+
+
 def _avatar(sym: str) -> str:
     s = str(sym or "?")
-    # neutral monogram: colour is kept for meaning (profit, loss, status)
-    return f'<span class="saas-av">{_esc(s[:1])}</span>'
+    col = _AVATAR[sum(ord(c) for c in s) % len(_AVATAR)]
+    return f'<span class="saas-av" style="background:{col}">{_esc(s[:1])}</span>'
 
 
 def _px(v) -> str:
@@ -3124,8 +3219,8 @@ def equity_figure(equity: pd.Series, bench: pd.Series | None,
     fig.add_trace(go.Scatter(
         x=equity.index, y=y, name="Strategy",
         line=dict(color=t["accent"], width=2),
-        fill="tozeroy" if pct else None,
-        fillcolor=fillcolor if pct else None,
+        fill="tozeroy",
+        fillcolor=fillcolor,
         hovertemplate="%{x|%d %b %Y}<br>" + hover + "<extra></extra>",
     ))
     ymin, ymax = float(np.nanmin(y)), float(np.nanmax(y))
@@ -4803,13 +4898,15 @@ def main() -> None:
     hydrate_books_from_browser()
     s = sidebar()
     inject_css()
+    st.markdown(f"<style>{_tile_icon_css()}</style>", unsafe_allow_html=True)
 
     demo = ('<span class="demo-badge" title="Prices are synthetic. Nothing here means anything '
             'about real stocks.">Demo mode — synthetic prices</span>') if s["demo"] else ""
     h1, h2 = st.columns([5, 1], vertical_alignment="center")
     with h1:
         st.markdown(
-            '<div class="app-top"><div><div class="app-brand"><span class="app-name">Breakout Lab'
+            '<div class="app-top"><div><div class="app-brand"><span class="app-mark">BL</span>'
+            '<span class="app-name">Breakout Lab'
             f'</span>{demo}</div>'
             '<div class="app-sub">Weekly N-week-high breakouts on NSE · tiered booking · EMA trail · journal</div>'
             '</div></div>',
