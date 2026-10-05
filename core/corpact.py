@@ -166,7 +166,13 @@ def scale_position(pos, factor: float) -> None:
     pos.hard_stop = pos.hard_stop / factor if pos.hard_stop else 0.0
     pos.decision_price = pos.decision_price / factor if pos.decision_price else 0.0
     # restate the per-share numbers of exits already booked, but NEVER their
-    # rupee P&L — that money has already happened
+    # rupee P&L — that money has already happened.
+    # In memory a position's fills are the very same dicts as its SELL rows in
+    # the ledger; after a JSON reload they are separate copies. Restating them in
+    # place therefore rewrote the ledger in one case and not the other. The
+    # ledger stays as filled (the equity curve restates it by ex-date), so the
+    # position gets its own copies first.
+    pos.fills = [dict(f) for f in pos.fills]
     for f in pos.fills:
         if f.get("price"):
             f["price"] = float(f["price"]) / factor

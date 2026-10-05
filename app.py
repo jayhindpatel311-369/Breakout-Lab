@@ -41,10 +41,10 @@ from core.breakout import (
     RegimeConfig,
     daily_filter_mask,
     compute_signals,
-    diversify_picks,
     qualifying_at,
     regime_blocked,
     score_week,
+    select_by_rs,
     to_weekly,
     volume_surge_daily,
 )
@@ -66,6 +66,8 @@ from core import indices as ix_mod
 from core import journal as jn
 from core import journal_stats as js
 from core import corpact as ca
+from core import gainers as gn
+from core import rs as rs_mod
 from core import params as pm
 from core import storage as sg
 import core.gvault as gv
@@ -99,6 +101,31 @@ def _now_ist() -> datetime:
     if _IST is not None:
         return datetime.now(_IST)
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+
+def _last_session() -> date:
+    """Default for every fill / decision date: the last day the NSE traded.
+
+    `date.today()` was the default before — the calendar date, in the server's
+    time zone (UTC on Streamlit Cloud). A fill saved on a Saturday or a holiday
+    with the box left alone got a date with no trading session behind it, and
+    the equity curve could never place it. Uses the newest price bar and live
+    session date seen this run; weekend-safe even before any prices load.
+    """
+    return data_mod.last_session_date(
+        st.session_state.get("_panel_index"), st.session_state.get("_live_date"),
+    ).date()
+
+
+def _week_is_final(week) -> bool:
+    """Has the week labelled `week` (its Friday) closed?
+
+    `today <= week` used to mean "unfinished", which kept a Friday's own week
+    open until Saturday — so a Friday-evening run ranked and exited on the
+    previous week. The week is final once its Friday's session has settled
+    (16:00 IST), or any day after.
+    """
+    return data_mod.session_settled(pd.Timestamp(week), _now_ist().replace(tzinfo=None))
 
 
 # Brokerage/charges assumptions for the live journal's Net P&L — a small
@@ -1010,7 +1037,7 @@ def saas_simple_html(df: pd.DataFrame, money=(), pct=()) -> str:
         for c in cols:
             v = r[c]
             if c in money:
-                signed = str(c).lower() in ("unrealised", "unrealized", "p&l", "pnl", "net")
+                signed = str(c).lower() in ("unrealised", "unrealized", "p&l", "pnl", "net", "day p&l")
                 shown = _signed_rupees(v) if signed else rupees(v)
                 tds.append(_td(str(c), shown, f'num {_tone_cls(v) if signed else ""}'))
             elif c in pct:
@@ -1054,8 +1081,29 @@ def split_pending(pending: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return book, stop
 
 
-def take_action_html(pending: pd.DataFrame, week) -> str:
-    """First-glance banner: N actions, X profit booking, Y SL."""
+def _cmp_watch_html(watch: pd.DataFrame | None) -> str:
+    """CMP already under the weekly 20 EMA — the Friday-close rule hasn't confirmed yet."""
+    if watch is None or watch.empty:
+        return ""
+    rows = "".join(
+        '<div class="act-row">'
+        f'<div class="saas-stock">{_avatar(r["symbol"])}'
+        f'<div class="sym">{_esc(r["symbol"])}</div></div>'
+        '<span class="tag tag-sl">CMP &lt; 20 EMA</span>'
+        f'<div class="act-why">CMP {_px(r["cmp"])} is {abs(r["gap_%"]):.1f}% below the weekly '
+        f'20 EMA {_px(r["ema"])}</div>'
+        f'<div class="act-meta">qty {int(r["qty"])}</div>'
+        "</div>"
+        for _, r in watch.iterrows())
+    return ('<div class="act-sub" style="margin-top:10px"><b>Below the 20 EMA on CMP</b> — '
+            "exit now if you choose; the rule itself confirms only on Friday's close.</div>"
+            + rows)
+
+
+def take_action_html(pending: pd.DataFrame, week, watch: pd.DataFrame | None = None) -> str:
+    """First-glance banner: N actions, X profit booking, Y SL — plus any holding
+    whose CMP is already under the weekly 20 EMA."""
+    extra = _cmp_watch_html(watch)
     book_rows, stop_rows = split_pending(pending)
     n_book = int(book_rows["symbol"].nunique()) if len(book_rows) else 0
     n_sl = int(stop_rows["symbol"].nunique()) if len(stop_rows) else 0
@@ -1067,7 +1115,7 @@ def take_action_html(pending: pd.DataFrame, week) -> str:
             '<div class="act-kicker">Take action</div>'
             '<div class="act-headline">No action this week</div>'
             f'<div class="act-sub">Hold. Nothing booked a target or hit a stop · week ending {week_s}.</div>'
-            "</div>"
+            + extra + "</div>"
         )
     bits = []
     if n_book:
@@ -1095,7 +1143,7 @@ def take_action_html(pending: pd.DataFrame, week) -> str:
         f'<div class="act-kicker">Take action</div>'
         f'<div class="act-headline">{n_act} action{"s" if n_act != 1 else ""} this week</div>'
         f'<div class="act-sub">{" · ".join(bits)} · week ending {week_s}</div>'
-        + "".join(rows) + "</div>"
+        + "".join(rows) + extra + "</div>"
     )
 
 
@@ -1156,6 +1204,95 @@ def load_benchmark(candidates: tuple[str, ...], start: str, end: str, demo: bool
         except Exception:
             continue
     return pd.Series(dtype=float), None, list(candidates)
+
+
+_NSE_BACKOFF_SECONDS = 15 * 60
+
+
+def _nse_blocked() -> bool:
+    """NSE refused us recently — don't make every refresh wait to be refused again."""
+    import time as _t
+    return _t.time() < float(st.session_state.get("_nse_blocked_until", 0.0))
+
+
+def _nse_mark_blocked() -> None:
+    import time as _t
+    st.session_state["_nse_blocked_until"] = _t.time() + _NSE_BACKOFF_SECONDS
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_nse_quotes(symbols: tuple[str, ...]):
+    """NSE live quotes for the open book, cached for a minute."""
+    return nse_mod.live_quotes(list(symbols))
+
+
+def live_cmp(symbols: list[str], demo: bool) -> tuple[pd.Series, object, pd.Series, str]:
+    """Live CMP for the open book: NSE first, Yahoo for anything NSE did not give.
+
+    Returns (cmp, session_date, nse_previous_close, source note). NSE's quote is
+    the exchange's own last price and previous close — what the broker shows —
+    and Yahoo's 5-minute bar can lag or differ. NSE blocks some networks
+    outright; then everything comes from Yahoo and the note says so.
+    """
+    empty = pd.Series(dtype=float)
+    if demo or not symbols:
+        return empty, None, empty, ""
+    if _nse_blocked():
+        q, rep = pd.DataFrame(columns=["last", "prev_close", "session"]), {"blocked": True}
+    else:
+        q, rep = load_nse_quotes(tuple(sorted(symbols)))
+        if rep.get("blocked"):
+            _nse_mark_blocked()
+    cmp = q["last"].astype(float) if len(q) else empty
+    prev = q["prev_close"].astype(float).dropna() if len(q) else empty
+    nse_day = q["session"].dropna().max() if len(q) and q["session"].notna().any() else None
+    missing = [s_ for s_ in symbols if s_ not in cmp.index]
+    y_day = None
+    if missing:
+        y, y_day = data_mod.live_last_prices(missing, with_date=True)
+        cmp = pd.concat([cmp, y]) if len(y) else cmp
+    day = nse_day if nse_day is not None else y_day
+    if len(q) == 0:
+        note = ("Yahoo (NSE quote unavailable"
+                + (" — NSE is blocking this network" if rep.get("blocked") else "") + ")")
+    elif missing:
+        note = f"NSE for {len(q)}, Yahoo for {len(missing)}"
+    else:
+        note = "NSE"
+    return cmp, day, prev, note
+
+
+def load_delivery(symbols: tuple[str, ...], days: tuple, demo: bool) -> tuple[pd.Series, str]:
+    """Average delivery % over `days` per symbol, from NSE bhavcopy — and a note.
+
+    Only the week's candidates, only the last few weeks: this is a tie-breaker,
+    not a screen. If NSE refuses, the tie-breaker is simply absent and the note
+    says so.
+    """
+    if not symbols or not days:
+        return pd.Series(dtype=float), ""
+    cal = pd.DatetimeIndex(days)
+    if demo:
+        _tr, dl = nse_mod.synthetic_trades(cal, list(symbols))
+        rep = {"failed": 0, "days": len(cal)}
+    elif _nse_blocked():
+        return pd.Series(dtype=float), "NSE refused recently, so no delivery % this run."
+    else:
+        try:
+            _tr, dl, rep = nse_mod.fetch_bhavcopy(cal, list(symbols), stop_after_failures=4)
+        except Exception as exc:                               # noqa: BLE001
+            return pd.Series(dtype=float), f"NSE delivery data failed ({type(exc).__name__})."
+        if rep.get("aborted"):
+            _nse_mark_blocked()
+    if dl is None or dl.empty:
+        return pd.Series(dtype=float), "NSE delivery data unavailable."
+    enough = dl.notna().sum() >= 5
+    avg = dl.mean(skipna=True).where(enough)
+    note = ""
+    if rep.get("failed"):
+        note = (f"NSE delivery data: {rep['failed']} of {rep['days']} days could not be "
+                "fetched.")
+    return avg, note
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60)
@@ -1580,8 +1717,11 @@ def sidebar() -> dict:
         with card("Fundamentals"):
             s["use_fundamentals"] = st.toggle(
                 "Fundamentals analysis", value=pv("p_fund_on", True), key="p_fund_on",
-                help="On: the final rank is Technical + Fundamentals. Off: technical only, "
-                     "and the combined score is simply the technical score.")
+                help="On: this week's buys must pass the fundamentals gate (reject on CFO "
+                     "negative in 2 of 3 years, interest cover under 1.5, or 25%+ dilution "
+                     "without asset growth; missing data passes). The weight below only sets "
+                     "the combined score the backtest ranks by — the live list is ordered by "
+                     "RS Rating.")
             s["fund_weight"] = 50
             s["fund_in_backtest"] = False
             if s["use_fundamentals"]:
@@ -1620,9 +1760,8 @@ def sidebar() -> dict:
                 s["max_per_sector"] = int(st.number_input(
                     "Max stocks from one sector", 1, 10, pv("p_div_max_sector", 2),
                     key="p_div_max_sector",
-                    help="If the cap leaves the list short it is filled by score anyway and "
-                         "marked {cap} — a rule that stops you deploying capital costs more "
-                         "than the concentration would have."))
+                    help="Strict: when the cap leaves the list short, the week buys fewer "
+                         "stocks — the cap is never broken to fill it."))
                 # this box's floor moves with "New entries per week", so a value kept
                 # from an earlier setting can fall below it — clamp before the widget
                 # is built rather than letting Streamlit raise on a stale state
@@ -1636,10 +1775,10 @@ def sidebar() -> dict:
                 s["max_promote_rank"] = int(st.number_input(
                     "Never promote a stock ranked below", _lo, 200,
                     key="p_div_max_rank", **_kw,
-                    help="The floor under the sector rule. If 30 names qualify and the 28th has "
-                         "a poor chart and poor numbers, buying it to balance a sector is a "
-                         "worse decision than holding a third stock from the same sector. "
-                         "Diversification never reaches past this rank."))
+                    help="A hard floor on the RS order: nothing ranked below this is bought, "
+                         "whether a higher name was skipped for its sector or failed the "
+                         "fundamentals gate. If 30 names qualify, the 28th is not worth owning "
+                         "just to balance a sector."))
 
             # ---------------- screen ---------------- #
         with card("Screen filters"):
@@ -1973,7 +2112,7 @@ def sidebar() -> dict:
 
             # ---------------- dates ---------------- #
         with card("Backtest window"):
-            today = date.today()
+            today = data_mod.today_ist().date()
             s["start"] = st.date_input("From", value=pv("p_start", date(today.year - 6, 1, 1)),
                                         key="p_start")
             s["end"] = st.date_input("To", value=pv("p_end", today), key="p_end")
@@ -1999,7 +2138,8 @@ def signal_days(cfg: BreakoutConfig) -> int:
     return int((cfg.lookback_weeks + cfg.fresh_weeks + 1) * 5)
 
 
-def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None = None):
+def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None = None,
+                  nse_close_for: list[str] | None = None):
     """Download data, compute signals and the screen. Cached where it matters.
 
     `restrict_to` narrows the download to a named handful. It is used when an
@@ -2009,7 +2149,7 @@ def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None
     imported list can affect a single number on screen. Loading five hundred
     extra symbols to compute nothing with them is pure waiting.
     """
-    today = date.today()
+    today = data_mod.today_ist().date()
     if for_live:
         # a live scan reads the last few years, never the backtest's window
         start = pd.Timestamp(today) - pd.Timedelta(weeks=live_history_weeks(s["breakout"]))
@@ -2051,7 +2191,8 @@ def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None
         # judge a live symbol on whether its RECENT history is complete, not on
         # whether it existed six years ago
         panel, dropped = data_mod.align_panel(panel, start, end,
-                                               min_history_days=need, tail_days=need)
+                                               min_history_days=need, tail_days=need,
+                                               keep_always=held)
     else:
         panel, dropped = data_mod.align_panel(panel, start, end)
     mcap = data_mod.market_cap_frame(panel.get("RawClose", close), shares)
@@ -2065,6 +2206,28 @@ def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None
             st.warning("NSE bhavcopy mostly failed — the trades filter is not running. "
                        f"{rep.get('failed')} of {rep.get('days')} days could not be fetched.")
 
+    nse_note = ""
+    if nse_close_for and not s["demo"] and _nse_blocked():
+        nse_note = "Closes: Yahoo (NSE refused recently; retrying in a few minutes)"
+    elif nse_close_for and not s["demo"]:
+        # NSE's official closes for the open book only, over the last few weeks —
+        # enough to put every weekly close the exit rules read on the exchange's
+        # number. The weekly EMA's longer memory stays on Yahoo's closes, which
+        # agree with NSE's on almost every day.
+        recent = panel["Close"].index[-30:]
+        held_cols = [c for c in nse_close_for if c in panel["Close"].columns]
+        with st.spinner("Fetching NSE official closes for your holdings…"):
+            try:
+                nse_close, nrep = nse_mod.fetch_bhav_close(recent, held_cols)
+            except Exception as exc:                           # noqa: BLE001
+                nse_close, nrep = pd.DataFrame(), {"errors": [type(exc).__name__]}
+        panel, n_cells = nse_mod.overlay_close(panel, nse_close)
+        if nrep.get("aborted"):
+            _nse_mark_blocked()
+        nse_note = (f"Closes: NSE official for {n_cells} of {len(recent) * len(held_cols)} "
+                    "recent holding-days" if n_cells else
+                    "Closes: Yahoo (NSE bhavcopy unavailable)")
+    st.session_state["_panel_index"] = list(panel["Close"].index[-5:])
     sig = compute_signals(panel, s["breakout"])
     dfc = s.get("daily_filter")
     daily_ok, daily_info = (pd.DataFrame(), {})
@@ -2090,7 +2253,7 @@ def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None
         "coverage": coverage, "need_days": need, "start": start, "end": end,
         "shares": shares, "symbols": symbols,
         "bench_used": bench_used, "bench_tried": bench_tried,
-        "daily_ok": daily_ok, "daily_info": daily_info,
+        "daily_ok": daily_ok, "daily_info": daily_info, "nse_note": nse_note,
     }
 
 
@@ -2315,7 +2478,7 @@ def drafts_ui(book: jn.Book, last_px: pd.Series | None) -> None:
         edited = st.data_editor(ed, **_WIDE, key="draft_editor", hide_index=True,
                                  disabled=["symbol"])
         c1, c2, c3 = st.columns([1, 1, 2])
-        fill_date = c1.date_input("Fill date", value=date.today(), key="draft_fill_date")
+        fill_date = c1.date_input("Fill date", value=_last_session(), key="draft_fill_date")
         if c2.button("Confirm ticked", type="primary", key="draft_confirm"):
             n, short = 0, []
             for _, r in edited.iterrows():
@@ -2524,7 +2687,7 @@ def manual_add_ui(book: jn.Book) -> None:
         qty = c2.number_input("Quantity", 1, 10_000_000, 100, key="man_add_qty")
         px = c3.number_input("Buy price (₹)", 0.01, 1e7, 100.0, key="man_add_px")
         c1, c2, c3 = st.columns(3)
-        when = c1.date_input("Buy date", value=date.today(), key="man_add_date")
+        when = c1.date_input("Buy date", value=_last_session(), key="man_add_date")
         stop = c2.number_input("Stop (₹)", 0.0, 1e7, 0.0, key="man_add_stop",
                                 help="Leave at 0 and the weekly 20 EMA rung still applies; "
                                      "this only seeds the risk figure.")
@@ -2577,7 +2740,7 @@ def corpact_ui(book: jn.Book) -> None:
                 sym = c2.selectbox("Stock", choices, key="ca_sym")
                 kind = c3.selectbox("Action", list(ca.KINDS), key="ca_kind",
                                      format_func=lambda k: ca.KINDS[k])
-                ex = st.date_input("Ex-date", value=date.today(), key="ca_date")
+                ex = st.date_input("Ex-date", value=_last_session(), key="ca_date")
 
                 a = b_ = 1.0
                 amount, keep, subscribed = 0.0, 100.0, True
@@ -2747,7 +2910,7 @@ def chartink_active() -> list[str]:
 def _store_chartink(res: "ck.ImportResult", source: str) -> None:
     st.session_state["chartink_symbols"] = list(res.symbols)
     st.session_state["chartink_source"] = source
-    st.session_state["chartink_when"] = str(date.today())
+    st.session_state["chartink_when"] = str(data_mod.today_ist().date())
     st.session_state["chartink_notes"] = list(res.notes)
     st.session_state["chartink_use"] = True
     st.session_state.pop("buys_ran", None)      # the list changed; the old scan is stale
@@ -3264,6 +3427,18 @@ def tab_backtest(s: dict) -> None:
 # --------------------------------------------------------------------------- #
 # TAB 2 — This week's buys
 # --------------------------------------------------------------------------- #
+def _rejected_ui(rejected: pd.DataFrame) -> None:
+    """Every candidate that was not bought, with the rule that stopped it."""
+    if rejected is None or rejected.empty:
+        return
+    vetoed = rejected[rejected["why"] != "list already full"]
+    if vetoed.empty:
+        return
+    with st.expander(f"Vetoed — {len(vetoed)} candidate(s) and why"):
+        cols = [c for c in ("rank", "rs_rating", "sector", "why") if c in vetoed.columns]
+        show_df(vetoed[cols].rename(columns={"rs_rating": "RS"}))
+
+
 def tab_buys(s: dict) -> None:
     page_head("This week’s buys",
               "Friday 2:30–3:00 pm or after close · Chartink rank + actions on open positions")
@@ -3295,7 +3470,9 @@ def tab_buys(s: dict) -> None:
     # an imported list drives the whole week, so nothing outside it is used for
     # anything — download those names and stop there
     ctx = build_context(s, for_live=True,
-                        restrict_to=_imported if _imported else None)
+                        restrict_to=_imported if _imported else None,
+                        # the week's exit list must read the same closes as Positions
+                        nse_close_for=sorted(book.open_symbols()) if book else None)
     sig, panel = ctx["signals"], ctx["panel"]
     wc = sig.weekly.get("Close", pd.DataFrame())
     if wc.empty:
@@ -3309,7 +3486,7 @@ def tab_buys(s: dict) -> None:
     # holiday there is no bar for it; the last bar (Thursday) already IS that
     # week's close via resample's "last", so bar-date < week must not be read
     # as "unfinished" or it quietly re-signals a week already acted on.
-    if pd.Timestamp(_now_ist().date()) <= pd.Timestamp(week):
+    if not _week_is_final(week):
         week = wc.index[-2] if len(wc.index) > 1 else week
     st.caption(f"Signal week ending **{pd.Timestamp(week).date()}** · "
                f"latest price bar {pd.Timestamp(last_daily).date()}")
@@ -3378,13 +3555,55 @@ def tab_buys(s: dict) -> None:
     scored = score_week(sig, week, cands, s["breakout"], ctx["vol_surge_weekly"],
                         fundamentals=fund)
 
+    # ---- RS Rating, against the selected universe ---- #
+    close_d = panel["Close"]
+    asof = close_d.index[close_d.index <= pd.Timestamp(week)]
+    asof = asof[-1] if len(asof) else close_d.index[-1]
+    universe = sorted(set(s["symbols"]))
+    if _imported:
+        # the imported list is priced alone; the ruler is still the universe
+        with st.spinner(f"Pricing the {len(universe)}-stock universe for RS…"):
+            upanel, _ush = load_panel(tuple(universe), str(pd.Timestamp(ctx["start"]).date()),
+                                      str(pd.Timestamp(ctx["end"]).date()), s["demo"])
+        uclose = upanel.get("Close", pd.DataFrame())
+    else:
+        uclose = close_d[[c for c in universe if c in close_d.columns]]
+    ref = rs_mod.rs_raw(uclose, asof)["rs_raw"]
+    cand_rs = rs_mod.rs_raw(close_d[[c for c in cands if c in close_d.columns]], asof)
+    if len(ref) < 30:
+        st.caption(f"⚠ Only {len(ref)} universe stocks could be rated, so RS is measured "
+                   "against the candidates themselves.")
+        ref = pd.concat([ref, cand_rs["rs_raw"]])
+    scored["rs_raw"] = cand_rs["rs_raw"].reindex(scored.index)
+    scored["rs_rating"] = rs_mod.rs_rating(cand_rs["rs_raw"], ref).reindex(scored.index)
+    scored["rs_short"] = cand_rs["rs_short"].reindex(scored.index)
+
+    # ---- delivery %, the tie-breaker ---- #
+    deliv_days = tuple(close_d.index[close_d.index <= pd.Timestamp(asof)][-20:])
+    with st.spinner("Reading NSE delivery % for the candidates…"):
+        deliv, deliv_note = load_delivery(tuple(sorted(cands)), deliv_days, s["demo"])
+    scored["delivery_pct"] = deliv.reindex(scored.index)
+    if deliv_note:
+        st.caption(deliv_note + " Ties in RS fall through to volume surge.")
+
+    # ---- the fundamentals gate ---- #
+    if not fund.empty and "gate" in fund.columns:
+        scored["gate"] = fund["gate"].reindex(scored.index).fillna("unknown")
+        scored["gate why"] = fund["gate why"].reindex(scored.index).fillna("")
+
     sectors = {}
     with st.spinner("Looking up sectors…"):
         sectors = load_sectors(tuple(sorted(cands)), s["demo"])
-    picks = diversify_picks(scored, int(s["entries_per_week"]), sectors,
-                            max_per_sector=int(s.get("max_per_sector", 2)),
-                            enabled=bool(s.get("diversify")),
-                            max_promote_rank=int(s.get("max_promote_rank") or 0) or None)
+    picks, rejected = select_by_rs(
+        scored, int(s["entries_per_week"]), sectors,
+        max_per_sector=int(s.get("max_per_sector", 2)),
+        max_rank=int(s.get("max_promote_rank") or 0) or None,
+        diversify=bool(s.get("diversify")))
+    if picks.empty:
+        st.warning("**Every candidate was vetoed this week** — nothing to buy. The rules are "
+                   "strict on purpose: a rule broken to fill the list is not a rule.")
+        _rejected_ui(rejected)
+        return
 
     # the same NSE size bands the journal reports on, so what you buy and what
     # you later measure are read in the same units
@@ -3443,12 +3662,20 @@ def tab_buys(s: dict) -> None:
         sized = size_position(ref_px, stop, s["sizing"], equity)
         n_days = int(cov.loc[sym, "days"]) if (cov is not None and sym in cov.index) else 0
         raw_pick = str(r.get("pick") or "")
-        pick_label = {"{?}": "no sector yet", "{div}": "sector fill",
-                      "{cap}": "over sector cap"}.get(raw_pick, raw_pick)
+        pick_label = {"{?}": "no sector yet"}.get(raw_pick, raw_pick)
+        gate_s = str(r.get("gate") or "")
+        gate_label = {"pass": "✅ pass", "unknown": "⚠ data nahi",
+                      "fail": "❌ fail"}.get(gate_s, "—")
         hist = f"listed {n_days // 5}w" if 0 < n_days < settled else ""
+        rs_val = r.get("rs_rating")
+        dl_val = r.get("delivery_pct")
         rows.append({
             "symbol": sym,
             "rank": int(r["rank"]) if "rank" in r else None,
+            "RS": (int(rs_val) if pd.notna(rs_val) else None),
+            "RS note": ("short history" if bool(r.get("rs_short")) else ""),
+            "delivery %": (round(float(dl_val), 1) if pd.notna(dl_val) else None),
+            "fund. gate": gate_label,
             "pick": pick_label,
             "history": hist,
             "sector": str(r.get("sector") or "Unknown"),
@@ -3530,39 +3757,42 @@ def tab_buys(s: dict) -> None:
                    f"{s['breakout'].ema_slow}-week EMA that becomes their final stop is "
                    "still a young average. Nothing is excluded; the number is "
                    "how many weeks of history they actually have.")
+    st.caption(
+        "**Order:** RS Rating, high to low (ties: delivery %, then volume surge). "
+        "**Vetoes**, never blended into the order: rank floor "
+        f"{s['max_promote_rank']}"
+        + (f", max {s['max_per_sector']} per sector" if s.get("diversify") else "")
+        + (", fundamentals gate (CFO, interest cover, dilution)" if "gate" in scored.columns
+           else " — fundamentals gate is off (switch on Fundamentals analysis)")
+        + ". Strict: a rule is never broken to fill the list.")
+    if "gate" in scored.columns:
+        st.caption("Gate ⚠ *data nahi* = not enough statements to check; it passes. "
+                   + fund_mod.GATE_NOT_YET.capitalize() + ".")
     if s.get("diversify"):
-        n_div = int((plan["pick"] == "sector fill").sum())
-        n_cap = int((plan["pick"] == "over sector cap").sum())
-        n_unk = int((plan["pick"] == "no sector yet").sum())
-        bits = [f"**sector fill** {n_div} promoted past a higher-ranked name whose sector was full"] if n_div else []
-        if n_cap:
-            bits.append(f"**over sector cap** {n_cap} taken over the {s['max_per_sector']}-per-sector cap "
-                        "to fill the list")
-        if n_unk:
-            bits.append(f"**no sector yet** {n_unk} with no sector on file, so never capped")
-        st.caption(("Sector cap {}/sector · ".format(s["max_per_sector"])
-                    + " · ".join(bits)) if bits
-                   else f"Sector cap {s['max_per_sector']}/sector — the top {len(plan)} by score "
-                        "were already spread out, nothing had to be promoted.")
-        st.caption(f"Diversification never reaches past rank {s['max_promote_rank']} — "
-                   "below that the stock is not worth owning whatever sector it is in.")
         st.caption("Sectors in this list: "
                    + ", ".join(f"{k} x{v}" for k, v in plan["sector"].value_counts().items()))
+    if len(plan) < int(s["entries_per_week"]):
+        st.info(f"**{len(plan)} of {int(s['entries_per_week'])}** this week — the rest of the "
+                "candidates were vetoed. The unspent slot(s) stay in cash.")
+    _rejected_ui(rejected)
 
     with st.expander(f"All {len(cands)} names "
                       + ("in the imported list" if _imported else "that qualified")
                       + ", ranked"):
-        cols = ["combined_score", "technical_score", "fundamentals_score", "what is good",
-                "close", "extension_%", "momentum_%", "volume_surge", "ema_fast"]
-        show_df(scored[[c for c in cols if c in scored.columns]].round(2))
-        st.caption("Combined = "
-                   f"{s['breakout'].w_technical:.0%} technical + "
-                   f"{s['breakout'].w_fundamental:.0%} fundamentals, "
-                   "renormalised for any name whose statements are missing.")
+        cols = ["rs_rating", "rs_raw", "delivery_pct", "volume_surge", "gate",
+                "technical_score", "fundamentals_score", "combined_score", "what is good",
+                "close", "extension_%", "momentum_%", "ema_fast"]
+        order = list(picks.index) + [i for i in rejected.index if i not in picks.index]
+        show_df(scored.reindex(order)[[c for c in cols if c in scored.columns]].round(2))
+        st.caption("Listed in RS order — the order the picks were made in. **rs_raw** is the "
+                   "weighted 3/6/9/12-month return (%). Technical, fundamentals and combined "
+                   "scores are shown for comparison; on the live list they no longer set "
+                   "the order (the backtest still ranks by combined score).")
 
     if s.get("use_fundamentals") and not fund.empty:
         with st.expander("Fundamentals in detail — the numbers behind the score"):
-            fcols = ["fundamentals_score", "what is good", "watch", "context applied",
+            fcols = ["gate", "gate why", "fundamentals_score", "what is good", "watch",
+                     "context applied", "interest cover x", "dilution % pa",
                      "sales CAGR 3y %", "sales growth 1y %", "net margin %",
                      "ROE %", "ROCE %", "CFO / PAT (3y)", "debt / equity", "note"]
             show_df(fund.reindex(scored.index)[[c for c in fcols if c in fund.columns]].round(2))
@@ -3589,7 +3819,7 @@ def tab_buys(s: dict) -> None:
                                  disabled=["decision price"])
 
         c1, c2 = st.columns([1, 3])
-        decided = c1.date_input("Decision date", value=date.today(), key="buy_date")
+        decided = c1.date_input("Decision date", value=_last_session(), key="buy_date")
         if c2.button("Queue as drafts", type="primary"):
             n, skipped = 0, []
             for _, r in edited.iterrows():
@@ -3600,7 +3830,8 @@ def tab_buys(s: dict) -> None:
                 d = book.add_draft(
                     sym, decided, int(r["qty"]), float(r["decision price"]), float(r["stop"]),
                     hard_stop=hard_stop_price(float(r["decision price"]), dist_pct),
-                    score=float(row["combined score"].iloc[0]) if len(row) else float("nan"),
+                    score=(float(row["RS"].iloc[0])
+                           if len(row) and pd.notna(row["RS"].iloc[0]) else float("nan")),
                     sector=str(row["sector"].iloc[0]) if len(row) else "")
                 if d is None:
                     skipped.append(sym)
@@ -3617,6 +3848,77 @@ def tab_buys(s: dict) -> None:
 # --------------------------------------------------------------------------- #
 # TAB 3 — Positions & exits
 # --------------------------------------------------------------------------- #
+def movers_ui(book: jn.Book, panel: dict, live: pd.Series, live_date,
+              nse_prev: pd.Series | None = None) -> None:
+    """Top 5 gainers and losers of the day — open positions only."""
+    held = sorted(book.open_symbols())
+    if not held:
+        return
+    raw = panel.get("RawClose", panel.get("Close", pd.DataFrame()))
+    raw = raw[[c for c in held if c in raw.columns]] if not raw.empty else raw
+    if len(live):
+        # CMP is a live tick; the move is against the session before its own date
+        session = pd.Timestamp(live_date) if live_date is not None else data_mod.today_ist()
+        cmp = live
+        asof = f"live, session {session.date()}"
+    elif not raw.empty:
+        session = pd.Timestamp(raw.index[-1])
+        cmp = raw.iloc[-1]
+        asof = f"close of {session.date()} — live quote unavailable"
+    else:
+        return
+    prev = gn.prev_close_before(raw, session)
+    if nse_prev is not None and len(nse_prev) and len(live):
+        # NSE's own previous close (corporate-action adjusted, what the broker shows)
+        prev = nse_prev.combine_first(prev)
+    qty: dict[str, float] = {}
+    for p in book.positions:
+        if p.is_open():
+            qty[p.symbol] = qty.get(p.symbol, 0) + p.open_qty
+    moves, missing = gn.day_moves(held, cmp, prev, pd.Series(qty, dtype=float))
+    up, down = gn.top_movers(moves, 5)
+
+    def _view(df: pd.DataFrame) -> pd.DataFrame:
+        v = df.copy()
+        for c in ("Prev close", "CMP"):
+            v[c] = v[c].map(_px)
+        return v
+
+    c1, c2 = st.columns(2)
+    with c1:
+        with card("Top 5 gainers today", asof):
+            st.markdown(saas_simple_html(_view(up), money=("Day P&L",), pct=("Day %",))
+                        if len(up) else '<div class="ptable-empty">Nothing in the book is up today.</div>',
+                        unsafe_allow_html=True)
+    with c2:
+        with card("Top 5 losers today", asof):
+            st.markdown(saas_simple_html(_view(down), money=("Day P&L",), pct=("Day %",))
+                        if len(down) else '<div class="ptable-empty">Nothing in the book is down today.</div>',
+                        unsafe_allow_html=True)
+    if missing:
+        st.caption("No day's move for " + ", ".join(missing)
+                   + " — no live quote or no previous close.")
+
+
+def _curve_health_note(eq: pd.Series) -> None:
+    """Say so when the replayed curve and the live book disagree.
+
+    The curve used to be forced to equal the live book on its last day, which
+    hid every gap inside "Today P&L". Now the gap is left visible instead.
+    """
+    if eq is None or not len(eq):
+        return
+    gap = float(eq.attrs.get("reconcile_gap", 0.0) or 0.0)
+    unpriced = eq.attrs.get("unpriced") or []
+    if abs(gap) > max(100.0, abs(float(eq.iloc[-1])) * 0.001):
+        st.caption(f"⚠ The day-by-day curve is {_signed_rupees(gap)} away from the live "
+                   "book. Something changed the book without a dated ledger entry — "
+                   "Today / 5-day P&L may be off by about that much.")
+    if unpriced:
+        st.caption("⚠ No price history for " + ", ".join(unpriced)
+                   + " — valued at the last fill price on the days it was held.")
+
+
 def tab_positions(s: dict) -> None:
     page_head("Positions & exits",
               "Live book · weekly 20/50 EMA · ladder. Refresh to mark-to-market.")
@@ -3646,7 +3948,8 @@ def tab_positions(s: dict) -> None:
                     unsafe_allow_html=True)
         return
 
-    ctx = build_context(s, for_live=True, restrict_to=list(book.open_symbols()))
+    ctx = build_context(s, for_live=True, restrict_to=list(book.open_symbols()),
+                        nse_close_for=sorted(book.open_symbols()))
     panel, sig = ctx["panel"], ctx["signals"]
     wc = sig.weekly.get("Close", pd.DataFrame())
     week = wc.index[-1]
@@ -3657,15 +3960,19 @@ def tab_positions(s: dict) -> None:
     # folded it in as "last"). Comparing bar-date < week wrongly read that as
     # "week unfinished" and stepped back an extra, already-stale week — which
     # is exactly how a real close-below-EMA exit got reported as "no action".
-    if pd.Timestamp(_now_ist().date()) <= pd.Timestamp(week) and len(wc.index) > 1:
+    if not _week_is_final(week) and len(wc.index) > 1:
         week = wc.index[-2]
 
-    last_px = panel["Close"].iloc[-1].copy()
+    # the last SETTLED session's close — what the ladder's daily rules read
+    daily_last = panel["Close"].iloc[-1].copy()
+    last_px = daily_last.copy()
     live_asof = ""
-    live = pd.Series(dtype=float)
+    live, live_date = pd.Series(dtype=float), None
+    nse_prev, cmp_src = pd.Series(dtype=float), ""
     if not s.get("demo"):
         with st.spinner("Fetching live CMP…"):
-            live = data_mod.live_last_prices(list(book.open_symbols()))
+            live, live_date, nse_prev, cmp_src = live_cmp(sorted(book.open_symbols()), False)
+        st.session_state["_live_date"] = live_date
         if len(live):
             for sym, px in live.items():
                 last_px[sym] = float(px)
@@ -3692,12 +3999,15 @@ def tab_positions(s: dict) -> None:
     risk_pct_cap = (risk_total / cap * 100) if cap else np.nan
 
     st.markdown("##### Dashboard")
-    close_src = panel["Close"].copy()
-    apply = getattr(data_mod, "apply_live_mark", None)
-    try:
-        close_m = apply(close_src, live) if apply is not None else close_src
-    except Exception:
-        close_m = close_src
+    # The curve needs every symbol the book EVER held: `panel` only has today's
+    # open positions, and a stock sold last week, missing from it, was being
+    # valued at ₹0 for every day it was held — its sale proceeds then showed up
+    # as "Today P&L", day after day.
+    ever = tuple(sorted({p.symbol for p in book.positions + book.closed}))
+    hist, _hist_sh = load_panel(ever, str(pd.Timestamp(ctx["start"]).date()),
+                                str(pd.Timestamp(ctx["end"]).date()), s["demo"])
+    raw_hist = hist.get("RawClose", hist.get("Close", pd.DataFrame()))
+    close_m = data_mod.apply_live_mark(raw_hist, live, live_date)
     eq_pos = js.equity_curve(book, close_m)
     td = js.window_pnl(eq_pos, 1)
     d5 = js.window_pnl(eq_pos, 5)
@@ -3711,6 +4021,7 @@ def tab_positions(s: dict) -> None:
         _wp("Today P&L", td, "vs previous close (live)", "{} session(s)"),
         _wp("Last 5 days P&L", d5, "5 trading days · live mark", "{} trading day(s) in book"),
     ])
+    _curve_health_note(eq_pos)
     tiles_row([
         ("Portfolio value", rupees(d["portfolio value"]),
          f"capital {rupees(book.capital)}", ""),
@@ -3750,21 +4061,29 @@ def tab_positions(s: dict) -> None:
     pending = jn.pending_actions(book, week, wc.loc[week], ef, es, s["ladder"],
                                   rearm_ema=s.get("rearm_ema", False),
                                   trail_levels=trail_levels,
-                                  daily_close=last_px,
+                                  daily_close=daily_last,
                                   targets_on_daily_close=s.get("targets_on_daily_close", True))
-    st.markdown(take_action_html(pending, week), unsafe_allow_html=True)
+    # a stock already on the stop list needs no second warning; one booking a
+    # profit target still gets it
+    _stops = split_pending(pending)[1]
+    watch = jn.below_fast_ema(book, last_px, ef,
+                              skip=set(_stops["symbol"]) if len(_stops) else set())
+    st.markdown(take_action_html(pending, week, watch), unsafe_allow_html=True)
 
     wl = js.winners_losers(d["detail"])
     if not wl.empty:
         with card("Up / down"):
             show_money_df(wl, money_cols=("Capital", "Value now", "Unrealised"),
                           pct_cols=("Avg %",))
+    movers_ui(book, panel, live, live_date, nse_prev)
 
     open_syms = sorted(book.open_symbols())
 
     with card("What you hold",
               ("Open positions · live CMP " + (f"as of {live_asof} IST" if live_asof
-               else "yesterday’s close — live quote unavailable"))):
+               else "yesterday’s close — live quote unavailable")
+               + (f" · CMP source: {cmp_src}" if cmp_src else "")
+               + (f" · {ctx['nse_note']}" if ctx.get("nse_note") else ""))):
         st.markdown(saas_hold_html(hold, capital=cap, risk_total=risk_total),
                     unsafe_allow_html=True)
 
@@ -3802,7 +4121,7 @@ def tab_positions(s: dict) -> None:
             edited = st.data_editor(ed, **_WIDE, key="sell_editor", hide_index=True,
                                      disabled=["rung", "why"])
             c1, c2 = st.columns([1, 3])
-            d = c1.date_input("Fill date", value=date.today(), key="sell_date")
+            d = c1.date_input("Fill date", value=_last_session(), key="sell_date")
             if c2.button("Save these exits to the journal", type="primary"):
                 n = 0
                 for _, r in edited.iterrows():
@@ -3827,7 +4146,7 @@ def tab_positions(s: dict) -> None:
             qty = c2.number_input("Qty", 1, int(pos.open_qty), int(pos.open_qty), key="man_qty")
             px = c3.number_input("Price", 0.01, 1e7,
                                   float(last_px.get(sym, pos.entry_price)), key="man_px")
-            dd = c4.date_input("Date", value=date.today(), key="man_date")
+            dd = c4.date_input("Date", value=_last_session(), key="man_date")
             if st.button("Record manual exit"):
                 book.sell(sym, dd, int(qty), float(px), "manual", "Manual exit")
                 persist_book(book)
@@ -3857,17 +4176,25 @@ def tab_journal(s: dict) -> None:
                        "everything you held, which needs prices. Without them you still get "
                        "realised P&L, win rate, profit factor and the exit breakdown."):
         names = sorted({p.symbol for p in book.positions + book.closed})
-        ctx = build_context(s, for_live=True, restrict_to=names)
-        close = ctx["panel"]["Close"].copy()
-        if not s.get("demo") and names:
-            live = data_mod.live_last_prices(
-                [p.symbol for p in book.positions if p.is_open()]
-            )
-            if len(live):
-                last = close.iloc[-1].copy()
-                for sym, px in live.items():
-                    last[sym] = float(px)
-                close.iloc[-1] = last
+        # Straight from the price store, not build_context: that one drops any
+        # symbol with too little history for the breakout scan, and a stock you
+        # held must be priced however young it is. Traded prices, not
+        # dividend-adjusted ones: fills are in traded rupees.
+        today = data_mod.today_ist()
+        start = today - pd.Timedelta(weeks=live_history_weeks(s["breakout"]))
+        with st.spinner(f"Loading prices for {len(names)} symbols…"):
+            hist, _sh = load_panel(tuple(names), str(start.date()), str(today.date()),
+                                   s["demo"])
+        close = hist.get("RawClose", hist.get("Close", pd.DataFrame())).copy()
+        if close.empty:
+            close = None
+        if close is not None and not s.get("demo") and names:
+            live, live_date, _prev, _src = live_cmp(
+                sorted({p.symbol for p in book.positions if p.is_open()}), False)
+            st.session_state["_live_date"] = live_date
+            # the same live mark the Positions tab uses — appended as today's
+            # point, never written over yesterday's close, so the two tabs agree
+            close = data_mod.apply_live_mark(close, live, live_date)
 
     st_ = js.stats(book, close)
     rb = js.exit_reasons(book)
@@ -3971,7 +4298,7 @@ def tab_journal(s: dict) -> None:
 
     if book.ledger:
         filled_years = {pd.Timestamp(r.get("date")).year for r in book.ledger if r.get("date")}
-        this_year = date.today().year
+        this_year = data_mod.today_ist().year
         start_y = min(filled_years | {this_year, 2026})
         end_y = max(this_year + 10, max(filled_years) if filled_years else this_year)
         years = list(range(int(start_y), int(end_y) + 1))

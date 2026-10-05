@@ -55,6 +55,56 @@ def _as_day(x) -> pd.Timestamp:
     return pd.Timestamp(t).normalize()
 
 
+def _snap(day: pd.Timestamp, idx: pd.DatetimeIndex) -> pd.Timestamp:
+    """Move a ledger date onto the trading calendar.
+
+    A fill saved on a Saturday or a holiday — the date box defaulted to the
+    calendar date and nobody changed it — carries a date the price panel has no
+    row for. The replay used to skip such a fill entirely, so the shares stayed
+    "held" in the curve forever. It belongs to the last session on or before its
+    date; anything before the first bar opens the curve, anything after the last
+    bar lands on the last bar. Snapping at read time also repairs entries that
+    are already saved with a bad date.
+    """
+    if day in idx:
+        return day
+    pos = idx.searchsorted(day, side="right") - 1
+    return idx[max(0, min(pos, len(idx) - 1))]
+
+
+def _corporate_events(book: Book) -> tuple[list[dict], list[tuple]]:
+    """Split/bonus restatements, and the dated qty/cash changes the ledger never saw.
+
+    Returns (splits, events). `splits` are applied to the ledger itself: the
+    price history is back-adjusted, so a holding must be on the post-split share
+    count for its whole life. `events` are (date, symbol, qty_change, cash_change)
+    for rights issues and manual restatements, which change the book without a
+    ledger row. Dividends come from `book.income`, not from here, so they are
+    never counted twice.
+    """
+    splits, events = [], []
+    for rec in getattr(book, "corporate_actions", []) or []:
+        if not rec.get("ok"):
+            continue
+        kind = str(rec.get("kind") or "")
+        before, after = rec.get("before") or {}, rec.get("after") or {}
+        sym = str(rec.get("symbol") or "")
+        try:
+            ex = _as_day(rec.get("ex_date") or rec.get("when"))
+        except Exception:
+            continue
+        if kind in ("split", "bonus"):
+            b, a = float(before.get("qty") or 0), float(after.get("qty") or 0)
+            if b > 0 and a > 0 and a != b:
+                splits.append({"symbol": sym, "ex": ex, "factor": a / b})
+        elif kind in ("rights", "restate"):
+            dq = float(after.get("open_qty") or 0) - float(before.get("open_qty") or 0)
+            cash = float(rec.get("cash_change") or 0.0)
+            if dq or cash:
+                events.append((ex, sym, dq, cash))
+    return splits, events
+
+
 def equity_curve(book: Book, close: pd.DataFrame | None) -> pd.Series:
     """Daily portfolio value: cash + the marked value of everything open.
 
@@ -62,9 +112,18 @@ def equity_curve(book: Book, close: pd.DataFrame | None) -> pd.Series:
     share count per symbol, and values the book on every trading day in
     `close`. That is the series a drawdown can actually be measured on.
 
-    Dates are normalised (tz stripped) so a Monday fill matches Monday's bar.
-    Cash-flows (add/withdraw) are applied on their day. Compounding steps are
-    ignored here — they only change sizing, not cash.
+    `close` must price every symbol the book EVER held, not only today's open
+    positions — a stock sold last week was still worth something the week
+    before. Pass the traded-price series (`RawClose`), not the dividend-adjusted
+    `Close`: fills are in traded rupees, and marking them against a series that
+    has had past dividends subtracted understates every day before an ex-date.
+
+    Every ledger date, cash-flow, dividend and corporate action is snapped onto
+    the trading calendar (`_snap`). The curve is NOT forced to match the live
+    book at the end — that forcing is what turned any gap between the two into
+    a fabricated "Today P&L". Instead the gap is measured and left in
+    `attrs["reconcile_gap"]` (live book minus replay) for the UI to flag, with
+    any held symbol that had no price at all in `attrs["unpriced"]`.
     """
     if not book.ledger or close is None or close.empty:
         return pd.Series(dtype=float)
@@ -72,73 +131,91 @@ def equity_curve(book: Book, close: pd.DataFrame | None) -> pd.Series:
     px = close.copy()
     px.index = pd.DatetimeIndex([_as_day(d) for d in px.index])
     px = px[~px.index.duplicated(keep="last")].sort_index()
+    px = px.apply(pd.to_numeric, errors="coerce")
 
     led = pd.DataFrame(book.ledger).copy()
     led["date"] = led["date"].map(_as_day)
     for c in ("qty", "price", "value"):
         led[c] = pd.to_numeric(led[c], errors="coerce").fillna(0.0)
-    led = led.sort_values("date")
+
+    splits, ca_events = _corporate_events(book)
+    for sp in splits:
+        m = (led["symbol"].astype(str) == sp["symbol"]) & (led["date"] < sp["ex"])
+        led.loc[m, "qty"] = led.loc[m, "qty"] * sp["factor"]
 
     first = led["date"].min()
-    idx = px.index[px.index >= first]
+    idx = px.index[px.index >= px.index[px.index <= first].max()] \
+        if (px.index <= first).any() else px.index
     if len(idx) == 0:
         return pd.Series(dtype=float)
 
-    flows: dict[pd.Timestamp, float] = {}
+    # every dated change, on the day it lands: (cash change, {symbol: qty change})
+    cash_on: dict[pd.Timestamp, float] = {}
+    qty_on: dict[pd.Timestamp, dict[str, float]] = {}
+
+    def _add(day, cash=0.0, sym=None, dq=0.0):
+        d = _snap(_as_day(day), idx)
+        if cash:
+            cash_on[d] = cash_on.get(d, 0.0) + float(cash)
+        if sym and dq:
+            book_d = qty_on.setdefault(d, {})
+            book_d[sym] = book_d.get(sym, 0.0) + float(dq)
+
     net_flows = 0.0
     for f in getattr(book, "cash_flows", []) or []:
         if str(f.get("kind") or "") == "compound":
             continue
         amt = float(f.get("amount") or 0.0)
         net_flows += amt
-        d = _as_day(f.get("date") or first)
-        flows[d] = flows.get(d, 0.0) + amt
+        _add(f.get("date") or first, cash=amt)
+    for inc in getattr(book, "income", []) or []:
+        _add(inc.get("date") or first, cash=float(inc.get("amount") or 0.0))
+    for ex, sym, dq, cash in ca_events:
+        _add(ex, cash=cash, sym=sym, dq=dq)
+    for _, r in led.iterrows():
+        sym, qty, val = str(r["symbol"]), float(r["qty"]), float(r["value"])
+        if str(r["side"]) == "BUY":
+            _add(r["date"], cash=-val, sym=sym, dq=qty)
+        else:
+            _add(r["date"], cash=val, sym=sym, dq=-qty)
+
+    # last traded price per symbol: the fallback mark for a name with no history
+    fallback = (led.sort_values("date").groupby("symbol")["price"].last().to_dict()
+                if len(led) else {})
+    marks = px.reindex(idx).ffill()
 
     # capital already includes deposits; start from capital net of later flows
     # so a deposit on 12 Sep does not inflate 1 Sep's equity.
     cash = float(book.capital) - net_flows
-    holdings: dict[str, int] = {}
+    holdings: dict[str, float] = {}
+    unpriced: set[str] = set()
     out = pd.Series(index=idx, dtype=float)
-    fills = {d: g for d, g in led.groupby("date")}
-
     for day in idx:
-        cash += flows.get(day, 0.0)
-        for _, r in fills.get(day, pd.DataFrame()).iterrows():
-            sym, qty = str(r["symbol"]), int(r["qty"])
-            if str(r["side"]) == "BUY":
-                cash -= float(r["value"])
-                holdings[sym] = holdings.get(sym, 0) + qty
-            else:
-                cash += float(r["value"])
-                holdings[sym] = holdings.get(sym, 0) - qty
-                if holdings[sym] <= 0:
-                    holdings.pop(sym, None)
+        cash += cash_on.get(day, 0.0)
+        for sym, dq in qty_on.get(day, {}).items():
+            holdings[sym] = holdings.get(sym, 0.0) + dq
+            if abs(holdings[sym]) < 1e-6:
+                holdings.pop(sym)
         mark = 0.0
-        if holdings:
-            row = px.loc[day] if day in px.index else None
-            for sym, qty in holdings.items():
-                p = float(row.get(sym, np.nan)) if row is not None else np.nan
-                if not np.isfinite(p) and sym in px.columns:
-                    hist = px[sym].loc[:day].dropna()
-                    p = float(hist.iloc[-1]) if len(hist) else 0.0
-                if not np.isfinite(p):
-                    p = 0.0
-                mark += qty * p
+        for sym, qty in holdings.items():
+            p = float(marks.at[day, sym]) if sym in marks.columns else np.nan
+            if not np.isfinite(p):
+                unpriced.add(sym)
+                p = float(fallback.get(sym, 0.0) or 0.0)
+            mark += qty * p
         out.loc[day] = cash + mark
 
     out = out.dropna().rename("equity")
-    # last point must tie to the live book: cash + today's mark
-    if len(out) and px.shape[1]:
-        last = px.iloc[-1]
-        mtm = 0.0
+    if len(out):
+        last = marks.iloc[-1]
+        live = float(book.cash)
         for p in book.positions:
             if not p.is_open():
                 continue
             v = float(last.get(p.symbol, np.nan)) if p.symbol in last.index else np.nan
-            if not np.isfinite(v):
-                v = float(p.entry_price)
-            mtm += p.open_qty * v
-        out.iloc[-1] = float(book.cash) + mtm
+            live += p.open_qty * (v if np.isfinite(v) else float(p.entry_price))
+        out.attrs["reconcile_gap"] = live - float(out.iloc[-1])
+        out.attrs["unpriced"] = sorted(unpriced)
     return out
 
 

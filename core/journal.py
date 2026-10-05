@@ -627,6 +627,36 @@ def open_positions_frame(
     return pd.DataFrame(rows)
 
 
+def below_fast_ema(book: Book, cmp: pd.Series, ema_fast: pd.Series,
+                   skip: set[str] | None = None) -> pd.DataFrame:
+    """Open positions whose CMP is under the weekly 20 EMA right now.
+
+    The 20 EMA exit itself waits for the week's close — that is the rule the
+    backtest tested, and it is unchanged. This is the early look at it: the same
+    EMA the Friday-close rule will be judged against, compared with the live
+    price, so you can exit before Friday if you choose. Demerger-linked holdings
+    (whose EMA rungs are off) and anything in `skip` (already on the exit list)
+    are left out; an EMA left on a pre-split scale is ignored, as in
+    `live_stop_price`.
+    """
+    rows = []
+    skip = skip or set()
+    for p in book.positions:
+        if not p.is_open() or p.symbol in skip or book.demerger_linked(p.symbol):
+            continue
+        c = float(cmp.get(p.symbol, np.nan)) if cmp is not None else np.nan
+        e = float(ema_fast.get(p.symbol, np.nan)) if ema_fast is not None else np.nan
+        if not (np.isfinite(c) and np.isfinite(e) and c > 0 and e > 0):
+            continue
+        if e > c * 1.8:                       # split junk, see live_stop_price
+            continue
+        if c < e:
+            rows.append({"symbol": p.symbol, "qty": int(p.open_qty), "cmp": c, "ema": e,
+                         "gap_%": (c / e - 1.0) * 100.0})
+    df = pd.DataFrame(rows, columns=["symbol", "qty", "cmp", "ema", "gap_%"])
+    return df.sort_values("gap_%").reset_index(drop=True)
+
+
 def pending_actions(
     book: Book,
     week: pd.Timestamp,

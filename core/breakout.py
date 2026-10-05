@@ -637,3 +637,98 @@ def diversify_picks(
                 notes[sym] = "{div}"
     picks["pick"] = [notes[s] for s in picks.index]
     return picks.sort_values("rank")
+
+
+# --------------------------------------------------------------------------- #
+# the live selection: RS order, then vetoes
+# --------------------------------------------------------------------------- #
+def select_by_rs(
+    scored: pd.DataFrame,
+    n: int,
+    sectors: dict[str, str] | None = None,
+    max_per_sector: int = 2,
+    max_rank: int | None = None,
+    diversify: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Pick this week's `n` from the candidates: RS Rating first, rules after.
+
+    `scored` is indexed by symbol and carries `rs_rating` (1-99), and optionally
+    `rs_raw`, `delivery_pct`, `volume_surge` and `gate` ("pass" / "unknown" /
+    "fail") with `gate why`.
+
+    **Order** — RS Rating, high to low. Equal ratings are broken by average
+    delivery % (more real buying first), then volume surge, then the raw RS
+    number, then the symbol, so the order never depends on dictionary luck.
+    That position is the stock's `rank`.
+
+    **Vetoes** — applied walking down that order, never blended into it:
+
+    * rank floor: nothing ranked below `max_rank` is bought, whatever else is
+      true of it (default 2 x n);
+    * fundamentals gate: `gate == "fail"` is rejected ("unknown" passes);
+    * sector cap: at most `max_per_sector` from one sector (when `diversify`).
+      A stock with no sector on file is exempt — missing data is not
+      concentration.
+
+    Strict: a rule is never broken to fill the list. A week where the rules
+    leave three good names buys three, and the rest stays in cash.
+
+    Returns ``(picks, rejected)``. Both carry `rank` and `sector`; picks carry
+    `pick` ("" or "{?}" for an unknown sector), rejected carry `why`.
+    """
+    if scored is None or scored.empty or n <= 0:
+        empty = pd.DataFrame()
+        return empty, empty
+
+    out = scored.copy()
+
+    def key(col: str) -> pd.Series:
+        # a missing value sorts last, never first
+        v = out[col] if col in out.columns else pd.Series(np.nan, index=out.index)
+        return pd.to_numeric(v, errors="coerce").fillna(-np.inf)
+
+    keys = pd.DataFrame({
+        "rs": key("rs_rating"), "deliv": key("delivery_pct"), "vol": key("volume_surge"),
+        "raw": key("rs_raw"), "_sym": out.index.astype(str),
+    }, index=out.index)
+    keys.index.name = None
+    order = keys.sort_values(["rs", "deliv", "vol", "raw", "_sym"],
+                             ascending=[False, False, False, False, True]).index
+    out = out.loc[order]
+    out["rank"] = np.arange(1, len(out) + 1)
+    sec = {s: str((sectors or {}).get(s, "") or "").strip() for s in out.index}
+    out["sector"] = [sec[s] or "Unknown" for s in out.index]
+
+    depth = int(max_rank) if max_rank else 2 * n
+    depth = max(depth, n)
+    gate = out["gate"].astype(str) if "gate" in out.columns else pd.Series("", index=out.index)
+    gate_why = (out["gate why"].astype(str) if "gate why" in out.columns
+                else pd.Series("", index=out.index))
+
+    counts: dict[str, int] = {}
+    chosen, notes, why = [], {}, {}
+    for sym in out.index:
+        rank = int(out.at[sym, "rank"])
+        if len(chosen) >= n:
+            why[sym] = "list already full"
+            continue
+        if rank > depth:
+            why[sym] = f"ranked {rank}, below the rank floor of {depth}"
+            continue
+        if gate.get(sym) == "fail":
+            why[sym] = "fundamentals gate: " + (gate_why.get(sym) or "failed")
+            continue
+        s = sec[sym]
+        if diversify and max_per_sector > 0 and s:
+            if counts.get(s, 0) >= max_per_sector:
+                why[sym] = f"sector full — already {max_per_sector} from {s}"
+                continue
+            counts[s] = counts.get(s, 0) + 1
+        chosen.append(sym)
+        notes[sym] = "" if (s or not diversify) else "{?}"
+
+    picks = out.loc[chosen].copy()
+    picks["pick"] = [notes[s] for s in picks.index]
+    rejected = out.loc[[s for s in out.index if s in why]].copy()
+    rejected["why"] = [why[s] for s in rejected.index]
+    return picks, rejected
