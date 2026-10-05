@@ -47,6 +47,36 @@ RAW_FIELDS = ["Open", "High", "Low", "Close", "Volume", "AdjFactor"]
 #   Volume              -> actual shares traded
 FIELDS = ["Open", "High", "Low", "Close", "RawClose", "Volume"]
 
+# NSE's cash session closes at 15:30 IST; Yahoo's daily bar for the day is only
+# trustworthy as a close a little after that.
+SESSION_SETTLED = (16, 0)
+
+
+def now_ist() -> datetime:
+    """Wall-clock time in India. Streamlit Cloud runs on UTC, where `date.today()`
+    is still yesterday until 05:30 IST — every date default has to come from here."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+    except Exception:
+        return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+
+def today_ist() -> pd.Timestamp:
+    return pd.Timestamp(now_ist().date())
+
+
+def session_settled(day, now: datetime | None = None) -> bool:
+    """True once `day`'s daily bar is final: any earlier day, or today after 16:00 IST."""
+    now = now or now_ist()
+    day = pd.Timestamp(day).normalize()
+    today = pd.Timestamp(now.date())
+    if day < today:
+        return True
+    if day > today:
+        return False
+    return (now.hour, now.minute) >= SESSION_SETTLED
+
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -67,19 +97,25 @@ def from_yahoo(ticker: str) -> str:
     return t
 
 
-def live_last_prices(symbols: list[str]) -> pd.Series:
+def live_last_prices(symbols: list[str], with_date: bool = False):
     """Yahoo last traded price right now — not yesterday's daily close.
 
     The daily cache is EOD. During market hours CMP on the positions tab has
     to come from a 5-minute bar (or fast_info), and must not be written back
     into the historical cache.
+
+    With `with_date=True` it returns `(prices, session_date)`: the date the
+    5-minute bars belong to. On an NSE holiday Yahoo hands back the previous
+    session's bars, so a session date before today is how the app knows the
+    market did not open — no holiday list needed. None when it cannot tell.
     """
     if not symbols:
-        return pd.Series(dtype=float)
+        return (pd.Series(dtype=float), None) if with_date else pd.Series(dtype=float)
     import yfinance as yf
 
     tickers = [to_yahoo(s) for s in symbols]
     out: dict[str, float] = {}
+    bar_days: list[pd.Timestamp] = []
     try:
         raw = yf.download(
             tickers=tickers if len(tickers) > 1 else tickers[0],
@@ -99,12 +135,14 @@ def live_last_prices(symbols: list[str]) -> pd.Series:
                         close = pd.to_numeric(sub["Close"], errors="coerce").dropna()
                         if len(close):
                             out[from_yahoo(t)] = float(close.iloc[-1])
+                            bar_days.append(_ist_day(close.index[-1]))
                     except Exception:
                         continue
             elif "Close" in raw.columns:
                 close = pd.to_numeric(raw["Close"], errors="coerce").dropna()
                 if len(close):
                     out[from_yahoo(tickers[0])] = float(close.iloc[-1])
+                    bar_days.append(_ist_day(close.index[-1]))
     except Exception:
         pass
 
@@ -127,10 +165,53 @@ def live_last_prices(symbols: list[str]) -> pd.Series:
                 out[s] = float(px)
         except Exception:
             continue
-    return pd.Series(out, dtype=float)
+    prices = pd.Series(out, dtype=float)
+    if not with_date:
+        return prices
+    days = [d for d in bar_days if d is not None]
+    return prices, (max(days) if days else None)
 
 
-def apply_live_mark(close: pd.DataFrame, live) -> pd.DataFrame:
+def _ist_day(ts) -> pd.Timestamp | None:
+    """The IST calendar day of a (possibly tz-aware) intraday timestamp."""
+    try:
+        t = pd.Timestamp(ts)
+        if t.tzinfo is not None:
+            t = t.tz_convert("Asia/Kolkata").tz_localize(None)
+        return t.normalize()
+    except Exception:
+        return None
+
+
+def last_session_date(panel_index=None, live_date=None, now: datetime | None = None) -> pd.Timestamp:
+    """The most recent day the NSE actually traded — the right default for any
+    fill or decision date.
+
+    Today, if the market opened today (a live 5-minute bar dated today, or a
+    daily bar for today in the panel). Otherwise the last daily bar in the
+    panel. With neither, the last weekday — weekend-safe, if not holiday-aware.
+    """
+    now = now or now_ist()
+    today = pd.Timestamp(now.date())
+    if live_date is not None and pd.Timestamp(live_date).normalize() >= today:
+        return today
+    last_bar = None
+    if panel_index is not None and len(panel_index):
+        last_bar = pd.Timestamp(max(panel_index)).normalize()
+        if last_bar >= today:
+            return today
+    if live_date is not None:
+        ld = pd.Timestamp(live_date).normalize()
+        return max(ld, last_bar) if last_bar is not None else ld
+    if last_bar is not None:
+        return last_bar
+    d = today
+    while d.weekday() >= 5:
+        d -= pd.Timedelta(days=1)
+    return d
+
+
+def apply_live_mark(close: pd.DataFrame, live, live_date=None) -> pd.DataFrame:
     """Stamp live CMP onto the curve without erasing yesterday's close.
 
     P&L and drawdown must share the same last point. If we overwrite the last
@@ -158,12 +239,7 @@ def apply_live_mark(close: pd.DataFrame, live) -> pd.DataFrame:
     px = px[~px.index.duplicated(keep="last")].sort_index()
 
     live_map = dict(live) if not isinstance(live, dict) else live
-    try:
-        from zoneinfo import ZoneInfo
-        n = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
-    except Exception:
-        n = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    now = pd.Timestamp(n).normalize()
+    now = pd.Timestamp(now_ist()).normalize()
     last = pd.Timestamp(px.index[-1])
     try:
         if getattr(last, "tzinfo", None) is not None:
@@ -182,7 +258,16 @@ def apply_live_mark(close: pd.DataFrame, live) -> pd.DataFrame:
         # on a day the market never opened — the exact "+1,130 on a Sunday"
         # symptom. Leave the cached close alone; there is nothing live to add.
         return px
-    if last < now:
+    if live_date is not None and pd.Timestamp(live_date).normalize() < now:
+        # The live bars belong to an earlier session: the NSE did not open today
+        # (a weekday holiday). Appending a "today" row would invent a trading day
+        # that shifts every N-session window by one. Mark the session they belong to.
+        target = pd.Timestamp(live_date).normalize()
+        if target > last:
+            px.loc[target] = px.iloc[-1]
+        elif target not in px.index:
+            return px
+    elif last < now:
         px.loc[now] = px.iloc[-1]
         target = now
     else:
@@ -272,12 +357,52 @@ class PriceStore:
         return pd.DataFrame(rows)
 
     # ------------------------------------------------------------- download --
+    # How long a refresh that brought nothing newer is trusted before trying
+    # again. Without it a holiday — which never grows a bar — would re-download
+    # every symbol on every rerun.
+    RETRY_AFTER_SECONDS = 3 * 60 * 60
+
+    @staticmethod
+    def expected_last_bar(end: pd.Timestamp, now: datetime | None = None) -> pd.Timestamp:
+        """The newest daily bar a complete cache should hold for a request ending `end`.
+
+        The last weekday on or before `end` whose session has settled — today's
+        bar counts only after 16:00 IST. Holidays are not known here; the retry
+        throttle is what stops a holiday from causing endless re-downloads.
+        """
+        now = now or now_ist()
+        d = min(pd.Timestamp(end).normalize(), pd.Timestamp(now.date()))
+        if not session_settled(d, now):
+            d -= pd.Timedelta(days=1)
+        while d.weekday() >= 5:
+            d -= pd.Timedelta(days=1)
+        return d
+
     def _needs_refresh(self, cached: pd.DataFrame | None, end: pd.Timestamp) -> bool:
         if cached is None or cached.empty:
             return True
-        last = cached.index.max()
-        # Yahoo has no weekend bars; allow a few days of slack.
-        return (end - last).days > max(self.max_stale_days, 3)
+        # The old rule allowed three days of slack, so Wednesday ran on Monday's
+        # bar: "previous close" was two sessions old and every weekly close and
+        # EMA lagged with it. A cache is complete only when it holds the last
+        # settled session.
+        return pd.Timestamp(cached.index.max()).normalize() < self.expected_last_bar(end)
+
+    def _attempts_path(self) -> str:
+        return os.path.join(self.cache_dir, "meta", "refresh_attempts.json")
+
+    def _read_attempts(self) -> dict[str, float]:
+        try:
+            with open(self._attempts_path()) as fh:
+                return {str(k): float(v) for k, v in json.load(fh).items()}
+        except Exception:
+            return {}
+
+    def _write_attempts(self, attempts: dict[str, float]) -> None:
+        try:
+            with open(self._attempts_path(), "w") as fh:
+                json.dump(attempts, fh)
+        except Exception:
+            pass
 
     def _download_batch(
         self, tickers: list[str], start: pd.Timestamp, end: pd.Timestamp
@@ -346,9 +471,14 @@ class PriceStore:
         frames: dict[str, pd.DataFrame] = {}
         to_fetch: list[str] = []
 
+        attempts = self._read_attempts()
+        now_ts = time.time()
         for t in tickers:
             cached = self._read_cache(t)
-            if cached is not None and not self._needs_refresh(cached, end) and cached.index.min() <= fetch_start:
+            fresh_enough = cached is not None and not self._needs_refresh(cached, end)
+            deep_enough = cached is not None and cached.index.min() <= fetch_start
+            recently_tried = now_ts - attempts.get(t, 0.0) < self.RETRY_AFTER_SECONDS
+            if cached is not None and deep_enough and (fresh_enough or recently_tried):
                 frames[t] = cached
             else:
                 to_fetch.append(t)
@@ -364,7 +494,12 @@ class PriceStore:
                         break
                     except Exception:
                         time.sleep(1.5 * (attempt + 1))
+                for t in chunk:
+                    attempts[t] = now_ts
                 for t, df in got.items():
+                    df = drop_unsettled(df)
+                    if df.empty:
+                        continue
                     old = self._read_cache(t)
                     merged = _merge(old, df)
                     self._write_cache(t, merged)
@@ -383,6 +518,8 @@ class PriceStore:
                 old = self._read_cache(t)
                 if old is not None:
                     frames[t] = old
+        if to_fetch and not self.offline:
+            self._write_attempts(attempts)
 
         # -------- assemble wide frames, keyed by the ORIGINAL symbol --------- #
         panel: dict[str, dict[str, pd.Series]] = {f: {} for f in FIELDS}
@@ -475,6 +612,26 @@ def _tidy(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def drop_unsettled(df: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
+    """Remove today's bar while the session is still running (and anything dated later).
+
+    During market hours Yahoo's daily download includes today as a half-built
+    bar priced at the latest tick. Cached, that tick became "today's close" and
+    stayed one until the next refresh — which, under the old 3-day staleness
+    rule, could be days later — feeding weekly closes and EMA exits a price the
+    stock never closed at. Live CMP has its own path (`live_last_prices`).
+    """
+    if df is None or df.empty:
+        return df
+    now = now or now_ist()
+    today = pd.Timestamp(now.date())
+    idx = pd.DatetimeIndex(df.index).normalize()
+    keep = idx < today
+    if session_settled(today, now):
+        keep = keep | (idx == today)
+    return df[keep]
+
+
 def _merge(old: pd.DataFrame | None, new: pd.DataFrame) -> pd.DataFrame:
     if old is None or old.empty:
         return new
@@ -490,6 +647,7 @@ def align_panel(
     min_history_days: int = 250,
     max_missing_frac: float = 0.20,
     tail_days: int = 0,
+    keep_always: set[str] | None = None,
 ) -> tuple[dict[str, pd.DataFrame], list[str]]:
     """Drop symbols with too little history, forward-fill small gaps.
 
@@ -514,6 +672,10 @@ def align_panel(
 
     A suspended or barely-traded scrip still fails the tail test, which is the
     thing this rule was actually protecting you from.
+
+    `keep_always` are never dropped — positions you already hold. A young stock
+    you bought still has to be priced and run through its exit rules; the
+    history test is about whether it can be *scanned*, not whether it exists.
     """
     close = panel.get("Close", pd.DataFrame())
     if close.empty:
@@ -522,8 +684,12 @@ def align_panel(
     window = close.loc[(close.index >= start - pd.Timedelta(days=400)) & (close.index <= end)]
     dropped: list[str] = []
     keep: list[str] = []
+    always = set(keep_always or ())
     for c in window.columns:
         col = window[c]
+        if c in always and col.dropna().shape[0] > 0:
+            keep.append(c)
+            continue
         if col.dropna().shape[0] < min_history_days:
             dropped.append(c)
             continue

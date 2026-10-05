@@ -101,6 +101,31 @@ def _now_ist() -> datetime:
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 
+def _last_session() -> date:
+    """Default for every fill / decision date: the last day the NSE traded.
+
+    `date.today()` was the default before — the calendar date, in the server's
+    time zone (UTC on Streamlit Cloud). A fill saved on a Saturday or a holiday
+    with the box left alone got a date with no trading session behind it, and
+    the equity curve could never place it. Uses the newest price bar and live
+    session date seen this run; weekend-safe even before any prices load.
+    """
+    return data_mod.last_session_date(
+        st.session_state.get("_panel_index"), st.session_state.get("_live_date"),
+    ).date()
+
+
+def _week_is_final(week) -> bool:
+    """Has the week labelled `week` (its Friday) closed?
+
+    `today <= week` used to mean "unfinished", which kept a Friday's own week
+    open until Saturday — so a Friday-evening run ranked and exited on the
+    previous week. The week is final once its Friday's session has settled
+    (16:00 IST), or any day after.
+    """
+    return data_mod.session_settled(pd.Timestamp(week), _now_ist().replace(tzinfo=None))
+
+
 # Brokerage/charges assumptions for the live journal's Net P&L — a small
 # app-wide preference (not book data), same file the calendar's chosen year
 # already lives in. Defaults are Zerodha-style equity delivery: ₹0 brokerage,
@@ -1973,7 +1998,7 @@ def sidebar() -> dict:
 
             # ---------------- dates ---------------- #
         with card("Backtest window"):
-            today = date.today()
+            today = data_mod.today_ist().date()
             s["start"] = st.date_input("From", value=pv("p_start", date(today.year - 6, 1, 1)),
                                         key="p_start")
             s["end"] = st.date_input("To", value=pv("p_end", today), key="p_end")
@@ -2009,7 +2034,7 @@ def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None
     imported list can affect a single number on screen. Loading five hundred
     extra symbols to compute nothing with them is pure waiting.
     """
-    today = date.today()
+    today = data_mod.today_ist().date()
     if for_live:
         # a live scan reads the last few years, never the backtest's window
         start = pd.Timestamp(today) - pd.Timedelta(weeks=live_history_weeks(s["breakout"]))
@@ -2051,7 +2076,8 @@ def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None
         # judge a live symbol on whether its RECENT history is complete, not on
         # whether it existed six years ago
         panel, dropped = data_mod.align_panel(panel, start, end,
-                                               min_history_days=need, tail_days=need)
+                                               min_history_days=need, tail_days=need,
+                                               keep_always=held)
     else:
         panel, dropped = data_mod.align_panel(panel, start, end)
     mcap = data_mod.market_cap_frame(panel.get("RawClose", close), shares)
@@ -2065,6 +2091,7 @@ def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None
             st.warning("NSE bhavcopy mostly failed — the trades filter is not running. "
                        f"{rep.get('failed')} of {rep.get('days')} days could not be fetched.")
 
+    st.session_state["_panel_index"] = list(panel["Close"].index[-5:])
     sig = compute_signals(panel, s["breakout"])
     dfc = s.get("daily_filter")
     daily_ok, daily_info = (pd.DataFrame(), {})
@@ -2315,7 +2342,7 @@ def drafts_ui(book: jn.Book, last_px: pd.Series | None) -> None:
         edited = st.data_editor(ed, **_WIDE, key="draft_editor", hide_index=True,
                                  disabled=["symbol"])
         c1, c2, c3 = st.columns([1, 1, 2])
-        fill_date = c1.date_input("Fill date", value=date.today(), key="draft_fill_date")
+        fill_date = c1.date_input("Fill date", value=_last_session(), key="draft_fill_date")
         if c2.button("Confirm ticked", type="primary", key="draft_confirm"):
             n, short = 0, []
             for _, r in edited.iterrows():
@@ -2524,7 +2551,7 @@ def manual_add_ui(book: jn.Book) -> None:
         qty = c2.number_input("Quantity", 1, 10_000_000, 100, key="man_add_qty")
         px = c3.number_input("Buy price (₹)", 0.01, 1e7, 100.0, key="man_add_px")
         c1, c2, c3 = st.columns(3)
-        when = c1.date_input("Buy date", value=date.today(), key="man_add_date")
+        when = c1.date_input("Buy date", value=_last_session(), key="man_add_date")
         stop = c2.number_input("Stop (₹)", 0.0, 1e7, 0.0, key="man_add_stop",
                                 help="Leave at 0 and the weekly 20 EMA rung still applies; "
                                      "this only seeds the risk figure.")
@@ -2577,7 +2604,7 @@ def corpact_ui(book: jn.Book) -> None:
                 sym = c2.selectbox("Stock", choices, key="ca_sym")
                 kind = c3.selectbox("Action", list(ca.KINDS), key="ca_kind",
                                      format_func=lambda k: ca.KINDS[k])
-                ex = st.date_input("Ex-date", value=date.today(), key="ca_date")
+                ex = st.date_input("Ex-date", value=_last_session(), key="ca_date")
 
                 a = b_ = 1.0
                 amount, keep, subscribed = 0.0, 100.0, True
@@ -2747,7 +2774,7 @@ def chartink_active() -> list[str]:
 def _store_chartink(res: "ck.ImportResult", source: str) -> None:
     st.session_state["chartink_symbols"] = list(res.symbols)
     st.session_state["chartink_source"] = source
-    st.session_state["chartink_when"] = str(date.today())
+    st.session_state["chartink_when"] = str(data_mod.today_ist().date())
     st.session_state["chartink_notes"] = list(res.notes)
     st.session_state["chartink_use"] = True
     st.session_state.pop("buys_ran", None)      # the list changed; the old scan is stale
@@ -3309,7 +3336,7 @@ def tab_buys(s: dict) -> None:
     # holiday there is no bar for it; the last bar (Thursday) already IS that
     # week's close via resample's "last", so bar-date < week must not be read
     # as "unfinished" or it quietly re-signals a week already acted on.
-    if pd.Timestamp(_now_ist().date()) <= pd.Timestamp(week):
+    if not _week_is_final(week):
         week = wc.index[-2] if len(wc.index) > 1 else week
     st.caption(f"Signal week ending **{pd.Timestamp(week).date()}** · "
                f"latest price bar {pd.Timestamp(last_daily).date()}")
@@ -3589,7 +3616,7 @@ def tab_buys(s: dict) -> None:
                                  disabled=["decision price"])
 
         c1, c2 = st.columns([1, 3])
-        decided = c1.date_input("Decision date", value=date.today(), key="buy_date")
+        decided = c1.date_input("Decision date", value=_last_session(), key="buy_date")
         if c2.button("Queue as drafts", type="primary"):
             n, skipped = 0, []
             for _, r in edited.iterrows():
@@ -3617,6 +3644,25 @@ def tab_buys(s: dict) -> None:
 # --------------------------------------------------------------------------- #
 # TAB 3 — Positions & exits
 # --------------------------------------------------------------------------- #
+def _curve_health_note(eq: pd.Series) -> None:
+    """Say so when the replayed curve and the live book disagree.
+
+    The curve used to be forced to equal the live book on its last day, which
+    hid every gap inside "Today P&L". Now the gap is left visible instead.
+    """
+    if eq is None or not len(eq):
+        return
+    gap = float(eq.attrs.get("reconcile_gap", 0.0) or 0.0)
+    unpriced = eq.attrs.get("unpriced") or []
+    if abs(gap) > max(100.0, abs(float(eq.iloc[-1])) * 0.001):
+        st.caption(f"⚠ The day-by-day curve is {_signed_rupees(gap)} away from the live "
+                   "book. Something changed the book without a dated ledger entry — "
+                   "Today / 5-day P&L may be off by about that much.")
+    if unpriced:
+        st.caption("⚠ No price history for " + ", ".join(unpriced)
+                   + " — valued at the last fill price on the days it was held.")
+
+
 def tab_positions(s: dict) -> None:
     page_head("Positions & exits",
               "Live book · weekly 20/50 EMA · ladder. Refresh to mark-to-market.")
@@ -3657,15 +3703,19 @@ def tab_positions(s: dict) -> None:
     # folded it in as "last"). Comparing bar-date < week wrongly read that as
     # "week unfinished" and stepped back an extra, already-stale week — which
     # is exactly how a real close-below-EMA exit got reported as "no action".
-    if pd.Timestamp(_now_ist().date()) <= pd.Timestamp(week) and len(wc.index) > 1:
+    if not _week_is_final(week) and len(wc.index) > 1:
         week = wc.index[-2]
 
-    last_px = panel["Close"].iloc[-1].copy()
+    # the last SETTLED session's close — what the ladder's daily rules read
+    daily_last = panel["Close"].iloc[-1].copy()
+    last_px = daily_last.copy()
     live_asof = ""
-    live = pd.Series(dtype=float)
+    live, live_date = pd.Series(dtype=float), None
     if not s.get("demo"):
         with st.spinner("Fetching live CMP…"):
-            live = data_mod.live_last_prices(list(book.open_symbols()))
+            live, live_date = data_mod.live_last_prices(list(book.open_symbols()),
+                                                        with_date=True)
+        st.session_state["_live_date"] = live_date
         if len(live):
             for sym, px in live.items():
                 last_px[sym] = float(px)
@@ -3692,12 +3742,15 @@ def tab_positions(s: dict) -> None:
     risk_pct_cap = (risk_total / cap * 100) if cap else np.nan
 
     st.markdown("##### Dashboard")
-    close_src = panel["Close"].copy()
-    apply = getattr(data_mod, "apply_live_mark", None)
-    try:
-        close_m = apply(close_src, live) if apply is not None else close_src
-    except Exception:
-        close_m = close_src
+    # The curve needs every symbol the book EVER held: `panel` only has today's
+    # open positions, and a stock sold last week, missing from it, was being
+    # valued at ₹0 for every day it was held — its sale proceeds then showed up
+    # as "Today P&L", day after day.
+    ever = tuple(sorted({p.symbol for p in book.positions + book.closed}))
+    hist, _hist_sh = load_panel(ever, str(pd.Timestamp(ctx["start"]).date()),
+                                str(pd.Timestamp(ctx["end"]).date()), s["demo"])
+    raw_hist = hist.get("RawClose", hist.get("Close", pd.DataFrame()))
+    close_m = data_mod.apply_live_mark(raw_hist, live, live_date)
     eq_pos = js.equity_curve(book, close_m)
     td = js.window_pnl(eq_pos, 1)
     d5 = js.window_pnl(eq_pos, 5)
@@ -3711,6 +3764,7 @@ def tab_positions(s: dict) -> None:
         _wp("Today P&L", td, "vs previous close (live)", "{} session(s)"),
         _wp("Last 5 days P&L", d5, "5 trading days · live mark", "{} trading day(s) in book"),
     ])
+    _curve_health_note(eq_pos)
     tiles_row([
         ("Portfolio value", rupees(d["portfolio value"]),
          f"capital {rupees(book.capital)}", ""),
@@ -3750,7 +3804,7 @@ def tab_positions(s: dict) -> None:
     pending = jn.pending_actions(book, week, wc.loc[week], ef, es, s["ladder"],
                                   rearm_ema=s.get("rearm_ema", False),
                                   trail_levels=trail_levels,
-                                  daily_close=last_px,
+                                  daily_close=daily_last,
                                   targets_on_daily_close=s.get("targets_on_daily_close", True))
     st.markdown(take_action_html(pending, week), unsafe_allow_html=True)
 
@@ -3802,7 +3856,7 @@ def tab_positions(s: dict) -> None:
             edited = st.data_editor(ed, **_WIDE, key="sell_editor", hide_index=True,
                                      disabled=["rung", "why"])
             c1, c2 = st.columns([1, 3])
-            d = c1.date_input("Fill date", value=date.today(), key="sell_date")
+            d = c1.date_input("Fill date", value=_last_session(), key="sell_date")
             if c2.button("Save these exits to the journal", type="primary"):
                 n = 0
                 for _, r in edited.iterrows():
@@ -3827,7 +3881,7 @@ def tab_positions(s: dict) -> None:
             qty = c2.number_input("Qty", 1, int(pos.open_qty), int(pos.open_qty), key="man_qty")
             px = c3.number_input("Price", 0.01, 1e7,
                                   float(last_px.get(sym, pos.entry_price)), key="man_px")
-            dd = c4.date_input("Date", value=date.today(), key="man_date")
+            dd = c4.date_input("Date", value=_last_session(), key="man_date")
             if st.button("Record manual exit"):
                 book.sell(sym, dd, int(qty), float(px), "manual", "Manual exit")
                 persist_book(book)
@@ -3857,17 +3911,26 @@ def tab_journal(s: dict) -> None:
                        "everything you held, which needs prices. Without them you still get "
                        "realised P&L, win rate, profit factor and the exit breakdown."):
         names = sorted({p.symbol for p in book.positions + book.closed})
-        ctx = build_context(s, for_live=True, restrict_to=names)
-        close = ctx["panel"]["Close"].copy()
-        if not s.get("demo") and names:
-            live = data_mod.live_last_prices(
-                [p.symbol for p in book.positions if p.is_open()]
+        # Straight from the price store, not build_context: that one drops any
+        # symbol with too little history for the breakout scan, and a stock you
+        # held must be priced however young it is. Traded prices, not
+        # dividend-adjusted ones: fills are in traded rupees.
+        today = data_mod.today_ist()
+        start = today - pd.Timedelta(weeks=live_history_weeks(s["breakout"]))
+        with st.spinner(f"Loading prices for {len(names)} symbols…"):
+            hist, _sh = load_panel(tuple(names), str(start.date()), str(today.date()),
+                                   s["demo"])
+        close = hist.get("RawClose", hist.get("Close", pd.DataFrame())).copy()
+        if close.empty:
+            close = None
+        if close is not None and not s.get("demo") and names:
+            live, live_date = data_mod.live_last_prices(
+                [p.symbol for p in book.positions if p.is_open()], with_date=True
             )
-            if len(live):
-                last = close.iloc[-1].copy()
-                for sym, px in live.items():
-                    last[sym] = float(px)
-                close.iloc[-1] = last
+            st.session_state["_live_date"] = live_date
+            # the same live mark the Positions tab uses — appended as today's
+            # point, never written over yesterday's close, so the two tabs agree
+            close = data_mod.apply_live_mark(close, live, live_date)
 
     st_ = js.stats(book, close)
     rb = js.exit_reasons(book)
@@ -3971,7 +4034,7 @@ def tab_journal(s: dict) -> None:
 
     if book.ledger:
         filled_years = {pd.Timestamp(r.get("date")).year for r in book.ledger if r.get("date")}
-        this_year = date.today().year
+        this_year = data_mod.today_ist().year
         start_y = min(filled_years | {this_year, 2026})
         end_y = max(this_year + 10, max(filled_years) if filled_years else this_year)
         years = list(range(int(start_y), int(end_y) + 1))
