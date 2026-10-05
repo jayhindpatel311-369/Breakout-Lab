@@ -66,6 +66,7 @@ from core import indices as ix_mod
 from core import journal as jn
 from core import journal_stats as js
 from core import corpact as ca
+from core import gainers as gn
 from core import params as pm
 from core import storage as sg
 import core.gvault as gv
@@ -1035,7 +1036,7 @@ def saas_simple_html(df: pd.DataFrame, money=(), pct=()) -> str:
         for c in cols:
             v = r[c]
             if c in money:
-                signed = str(c).lower() in ("unrealised", "unrealized", "p&l", "pnl", "net")
+                signed = str(c).lower() in ("unrealised", "unrealized", "p&l", "pnl", "net", "day p&l")
                 shown = _signed_rupees(v) if signed else rupees(v)
                 tds.append(_td(str(c), shown, f'num {_tone_cls(v) if signed else ""}'))
             elif c in pct:
@@ -3644,6 +3645,54 @@ def tab_buys(s: dict) -> None:
 # --------------------------------------------------------------------------- #
 # TAB 3 — Positions & exits
 # --------------------------------------------------------------------------- #
+def movers_ui(book: jn.Book, panel: dict, live: pd.Series, live_date) -> None:
+    """Top 5 gainers and losers of the day — open positions only."""
+    held = sorted(book.open_symbols())
+    if not held:
+        return
+    raw = panel.get("RawClose", panel.get("Close", pd.DataFrame()))
+    raw = raw[[c for c in held if c in raw.columns]] if not raw.empty else raw
+    if len(live):
+        # CMP is a live tick; the move is against the session before its own date
+        session = pd.Timestamp(live_date) if live_date is not None else data_mod.today_ist()
+        cmp = live
+        asof = f"live, session {session.date()}"
+    elif not raw.empty:
+        session = pd.Timestamp(raw.index[-1])
+        cmp = raw.iloc[-1]
+        asof = f"close of {session.date()} — live quote unavailable"
+    else:
+        return
+    prev = gn.prev_close_before(raw, session)
+    qty: dict[str, float] = {}
+    for p in book.positions:
+        if p.is_open():
+            qty[p.symbol] = qty.get(p.symbol, 0) + p.open_qty
+    moves, missing = gn.day_moves(held, cmp, prev, pd.Series(qty, dtype=float))
+    up, down = gn.top_movers(moves, 5)
+
+    def _view(df: pd.DataFrame) -> pd.DataFrame:
+        v = df.copy()
+        for c in ("Prev close", "CMP"):
+            v[c] = v[c].map(_px)
+        return v
+
+    c1, c2 = st.columns(2)
+    with c1:
+        with card("Top 5 gainers today", asof):
+            st.markdown(saas_simple_html(_view(up), money=("Day P&L",), pct=("Day %",))
+                        if len(up) else '<div class="ptable-empty">Nothing in the book is up today.</div>',
+                        unsafe_allow_html=True)
+    with c2:
+        with card("Top 5 losers today", asof):
+            st.markdown(saas_simple_html(_view(down), money=("Day P&L",), pct=("Day %",))
+                        if len(down) else '<div class="ptable-empty">Nothing in the book is down today.</div>',
+                        unsafe_allow_html=True)
+    if missing:
+        st.caption("No day's move for " + ", ".join(missing)
+                   + " — no live quote or no previous close.")
+
+
 def _curve_health_note(eq: pd.Series) -> None:
     """Say so when the replayed curve and the live book disagree.
 
@@ -3813,6 +3862,7 @@ def tab_positions(s: dict) -> None:
         with card("Up / down"):
             show_money_df(wl, money_cols=("Capital", "Value now", "Unrealised"),
                           pct_cols=("Avg %",))
+    movers_ui(book, panel, live, live_date)
 
     open_syms = sorted(book.open_symbols())
 
