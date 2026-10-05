@@ -1206,6 +1206,62 @@ def load_benchmark(candidates: tuple[str, ...], start: str, end: str, demo: bool
     return pd.Series(dtype=float), None, list(candidates)
 
 
+_NSE_BACKOFF_SECONDS = 15 * 60
+
+
+def _nse_blocked() -> bool:
+    """NSE refused us recently — don't make every refresh wait to be refused again."""
+    import time as _t
+    return _t.time() < float(st.session_state.get("_nse_blocked_until", 0.0))
+
+
+def _nse_mark_blocked() -> None:
+    import time as _t
+    st.session_state["_nse_blocked_until"] = _t.time() + _NSE_BACKOFF_SECONDS
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_nse_quotes(symbols: tuple[str, ...]):
+    """NSE live quotes for the open book, cached for a minute."""
+    return nse_mod.live_quotes(list(symbols))
+
+
+def live_cmp(symbols: list[str], demo: bool) -> tuple[pd.Series, object, pd.Series, str]:
+    """Live CMP for the open book: NSE first, Yahoo for anything NSE did not give.
+
+    Returns (cmp, session_date, nse_previous_close, source note). NSE's quote is
+    the exchange's own last price and previous close — what the broker shows —
+    and Yahoo's 5-minute bar can lag or differ. NSE blocks some networks
+    outright; then everything comes from Yahoo and the note says so.
+    """
+    empty = pd.Series(dtype=float)
+    if demo or not symbols:
+        return empty, None, empty, ""
+    if _nse_blocked():
+        q, rep = pd.DataFrame(columns=["last", "prev_close", "session"]), {"blocked": True}
+    else:
+        q, rep = load_nse_quotes(tuple(sorted(symbols)))
+        if rep.get("blocked"):
+            _nse_mark_blocked()
+    cmp = q["last"].astype(float) if len(q) else empty
+    prev = q["prev_close"].astype(float).dropna() if len(q) else empty
+    nse_day = q["session"].dropna().max() if len(q) and q["session"].notna().any() else None
+    missing = [s_ for s_ in symbols if s_ not in cmp.index]
+    y_day = None
+    if missing:
+        y, y_day = data_mod.live_last_prices(missing, with_date=True)
+        cmp = pd.concat([cmp, y]) if len(y) else cmp
+    day = nse_day if nse_day is not None else y_day
+    if len(q) == 0:
+        note = ("Yahoo (NSE quote unavailable"
+                + (" — NSE is blocking this network" if rep.get("blocked") else "") + ")")
+    elif missing:
+        note = f"NSE for {len(q)}, Yahoo for {len(missing)}"
+    else:
+        note = "NSE"
+    return cmp, day, prev, note
+
+
 def load_delivery(symbols: tuple[str, ...], days: tuple, demo: bool) -> tuple[pd.Series, str]:
     """Average delivery % over `days` per symbol, from NSE bhavcopy — and a note.
 
@@ -2078,7 +2134,8 @@ def signal_days(cfg: BreakoutConfig) -> int:
     return int((cfg.lookback_weeks + cfg.fresh_weeks + 1) * 5)
 
 
-def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None = None):
+def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None = None,
+                  nse_close_for: list[str] | None = None):
     """Download data, compute signals and the screen. Cached where it matters.
 
     `restrict_to` narrows the download to a named handful. It is used when an
@@ -2145,6 +2202,27 @@ def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None
             st.warning("NSE bhavcopy mostly failed — the trades filter is not running. "
                        f"{rep.get('failed')} of {rep.get('days')} days could not be fetched.")
 
+    nse_note = ""
+    if nse_close_for and not s["demo"] and _nse_blocked():
+        nse_note = "Closes: Yahoo (NSE refused recently; retrying in a few minutes)"
+    elif nse_close_for and not s["demo"]:
+        # NSE's official closes for the open book only, over the last few weeks —
+        # enough to put every weekly close the exit rules read on the exchange's
+        # number. The weekly EMA's longer memory stays on Yahoo's closes, which
+        # agree with NSE's on almost every day.
+        recent = panel["Close"].index[-30:]
+        held_cols = [c for c in nse_close_for if c in panel["Close"].columns]
+        with st.spinner("Fetching NSE official closes for your holdings…"):
+            try:
+                nse_close, nrep = nse_mod.fetch_bhav_close(recent, held_cols)
+            except Exception as exc:                           # noqa: BLE001
+                nse_close, nrep = pd.DataFrame(), {"errors": [type(exc).__name__]}
+        panel, n_cells = nse_mod.overlay_close(panel, nse_close)
+        if nrep.get("aborted"):
+            _nse_mark_blocked()
+        nse_note = (f"Closes: NSE official for {n_cells} of {len(recent) * len(held_cols)} "
+                    "recent holding-days" if n_cells else
+                    "Closes: Yahoo (NSE bhavcopy unavailable)")
     st.session_state["_panel_index"] = list(panel["Close"].index[-5:])
     sig = compute_signals(panel, s["breakout"])
     dfc = s.get("daily_filter")
@@ -2171,7 +2249,7 @@ def build_context(s: dict, for_live: bool = False, restrict_to: list[str] | None
         "coverage": coverage, "need_days": need, "start": start, "end": end,
         "shares": shares, "symbols": symbols,
         "bench_used": bench_used, "bench_tried": bench_tried,
-        "daily_ok": daily_ok, "daily_info": daily_info,
+        "daily_ok": daily_ok, "daily_info": daily_info, "nse_note": nse_note,
     }
 
 
@@ -3764,7 +3842,8 @@ def tab_buys(s: dict) -> None:
 # --------------------------------------------------------------------------- #
 # TAB 3 — Positions & exits
 # --------------------------------------------------------------------------- #
-def movers_ui(book: jn.Book, panel: dict, live: pd.Series, live_date) -> None:
+def movers_ui(book: jn.Book, panel: dict, live: pd.Series, live_date,
+              nse_prev: pd.Series | None = None) -> None:
     """Top 5 gainers and losers of the day — open positions only."""
     held = sorted(book.open_symbols())
     if not held:
@@ -3783,6 +3862,9 @@ def movers_ui(book: jn.Book, panel: dict, live: pd.Series, live_date) -> None:
     else:
         return
     prev = gn.prev_close_before(raw, session)
+    if nse_prev is not None and len(nse_prev) and len(live):
+        # NSE's own previous close (corporate-action adjusted, what the broker shows)
+        prev = nse_prev.combine_first(prev)
     qty: dict[str, float] = {}
     for p in book.positions:
         if p.is_open():
@@ -3860,7 +3942,8 @@ def tab_positions(s: dict) -> None:
                     unsafe_allow_html=True)
         return
 
-    ctx = build_context(s, for_live=True, restrict_to=list(book.open_symbols()))
+    ctx = build_context(s, for_live=True, restrict_to=list(book.open_symbols()),
+                        nse_close_for=sorted(book.open_symbols()))
     panel, sig = ctx["panel"], ctx["signals"]
     wc = sig.weekly.get("Close", pd.DataFrame())
     week = wc.index[-1]
@@ -3879,10 +3962,10 @@ def tab_positions(s: dict) -> None:
     last_px = daily_last.copy()
     live_asof = ""
     live, live_date = pd.Series(dtype=float), None
+    nse_prev, cmp_src = pd.Series(dtype=float), ""
     if not s.get("demo"):
         with st.spinner("Fetching live CMP…"):
-            live, live_date = data_mod.live_last_prices(list(book.open_symbols()),
-                                                        with_date=True)
+            live, live_date, nse_prev, cmp_src = live_cmp(sorted(book.open_symbols()), False)
         st.session_state["_live_date"] = live_date
         if len(live):
             for sym, px in live.items():
@@ -3986,13 +4069,15 @@ def tab_positions(s: dict) -> None:
         with card("Up / down"):
             show_money_df(wl, money_cols=("Capital", "Value now", "Unrealised"),
                           pct_cols=("Avg %",))
-    movers_ui(book, panel, live, live_date)
+    movers_ui(book, panel, live, live_date, nse_prev)
 
     open_syms = sorted(book.open_symbols())
 
     with card("What you hold",
               ("Open positions · live CMP " + (f"as of {live_asof} IST" if live_asof
-               else "yesterday’s close — live quote unavailable"))):
+               else "yesterday’s close — live quote unavailable")
+               + (f" · CMP source: {cmp_src}" if cmp_src else "")
+               + (f" · {ctx['nse_note']}" if ctx.get("nse_note") else ""))):
         st.markdown(saas_hold_html(hold, capital=cap, risk_total=risk_total),
                     unsafe_allow_html=True)
 
@@ -4098,9 +4183,8 @@ def tab_journal(s: dict) -> None:
         if close.empty:
             close = None
         if close is not None and not s.get("demo") and names:
-            live, live_date = data_mod.live_last_prices(
-                [p.symbol for p in book.positions if p.is_open()], with_date=True
-            )
+            live, live_date, _prev, _src = live_cmp(
+                sorted({p.symbol for p in book.positions if p.is_open()}), False)
             st.session_state["_live_date"] = live_date
             # the same live mark the Positions tab uses — appended as today's
             # point, never written over yesterday's close, so the two tabs agree
