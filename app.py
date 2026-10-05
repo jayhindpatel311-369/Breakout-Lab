@@ -906,7 +906,8 @@ def tile(label: str, value: str, sub: str = "", tone: str = "") -> str:
     kind = " tile-good" if tone == "pos" else (" tile-bad" if tone == "neg" else "")
     valcls = f" {tone}" if tone else ""
     sub_html = f'<div class="tile-sub">{sub}</div>' if sub else ""
-    return (f'<div class="tile{kind}"><div class="tile-label">{label}</div>'
+    key = "".join(ch_ if ch_.isalnum() else "-" for ch_ in str(label).lower()).strip("-")
+    return (f'<div class="tile{kind}" data-k="{key}"><div class="tile-label">{label}</div>'
             f'<div class="tile-value{valcls}">{value}</div>{sub_html}</div>')
 
 
