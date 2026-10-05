@@ -139,7 +139,7 @@ def JOURNAL_DIR() -> str:                                      # noqa: N802
 def PARAMS_DIR() -> str:                                       # noqa: N802
     return sg.params_dir(APP_DIR)
 
-st.set_page_config(page_title="Breakout Lab", page_icon="📈", layout="wide",
+st.set_page_config(page_title="Breakout Lab", page_icon=":material/monitoring:", layout="wide",
                    initial_sidebar_state="collapsed")
 
 # --- Streamlit version compat ---------------------------------------------- #
@@ -233,213 +233,229 @@ def show_chart(fig, **kw):
 # --------------------------------------------------------------------------- #
 # styling
 # --------------------------------------------------------------------------- #
-def inject_css(dark: bool) -> None:
-    """Mix: Option-1 cards, Option-3 calendar/KPI strip, Option-2 chart density."""
+def inject_css() -> None:
+    """The light design system ("Calm Slate") — tokens first, components after.
+
+    Light only, by design. Every colour below comes from a token on :root, so a
+    colour is changed in one place. Streamlit's own controls take the accent
+    from .streamlit/config.toml.
+    """
     st.markdown(
         """
         <style>
-        html, body, [class*="css"] { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-        .stApp { background: #f3f5f8; color: #111827; }
-        .block-container { padding-top: 4.8rem !important; padding-bottom: 3.2rem; max-width: 1440px; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        :root {
+            --bg: #F5F7FA; --bg-sunken: #EEF1F5;
+            --surface: #FFFFFF; --surface-muted: var(--surface-muted);
+            --border: #E3E8EF; --border-strong: #D5DCE5; --divider: #EDF1F5;
+            --text-1: #1A2233; --text-2: #475569; --text-3: #64748B; --text-disabled: #94A3B8;
+            --accent: #2B59C3; --accent-hover: #234AA3; --accent-soft: #EEF3FC; --accent-border: #C9D7F4;
+            --pos: #0F7B55; --pos-soft: #EAF6F0; --pos-border: #BFE3D1;
+            --neg: #B93A32; --neg-soft: #FCEEEE; --neg-border: #F2C9C6;
+            --warn: #9A6200; --warn-soft: #FDF5E6; --warn-border: #F2DDB0;
+            --shadow-xs: 0 1px 2px rgba(16,24,40,.04);
+            --shadow-md: 0 8px 24px rgba(16,24,40,.08);
+            --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 16px;
+            --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        }
+        html, body, .stApp, [class*="css"], button, input, textarea, select {
+            font-family: var(--font);
+            font-feature-settings: "tnum" 1, "cv11" 1;
+        }
+        .stApp { background: var(--bg); color: var(--text-1); }
+        .block-container { padding-top: 2.6rem !important; padding-bottom: 3.2rem; max-width: 1440px; }
         header[data-testid="stHeader"] { background: transparent !important; }
 
         section[data-testid="stSidebar"] {
-            background: #ffffff !important;
-            border-right: 1px solid #e8eaee;
+            background: var(--surface) !important;
+            border-right: 1px solid var(--border);
         }
-        section[data-testid="stSidebar"] * { color: #111827 !important; }
+        section[data-testid="stSidebar"] * { color: var(--text-1) !important; }
         section[data-testid="stSidebar"] .stMarkdown p,
         section[data-testid="stSidebar"] label,
-        section[data-testid="stSidebar"] span { color: #4b5563 !important; }
+        section[data-testid="stSidebar"] span { color: var(--text-2) !important; }
         section[data-testid="stSidebar"] h3,
-        section[data-testid="stSidebar"] h4 { color: #111827 !important; letter-spacing: -.02em; }
+        section[data-testid="stSidebar"] h4 { color: var(--text-1) !important; letter-spacing: -.02em; }
         section[data-testid="stSidebar"] h4 {
             font-size: 12px !important; text-transform: uppercase; letter-spacing: .08em !important;
-            color: #9ca3af !important; margin-top: 18px !important;
+            color: var(--text-3) !important; margin-top: 18px !important;
         }
 
         .sb-brand { display:flex; gap:10px; align-items:center; padding: 4px 2px 16px;
-                    border-bottom: 1px solid #f3f4f6; margin-bottom: 10px; }
-        .sb-mark { width:36px; height:36px; border-radius:10px; background:#2563eb; color:#fff;
-                   font-weight:800; font-size:13px; display:flex; align-items:center; justify-content:center; }
-        .sb-name { font-weight:800; font-size:15px; letter-spacing:-.03em; color:#111827; }
-        .sb-sub { font-size:11px; color:#9ca3af; margin-top:1px; }
+                    border-bottom: 1px solid var(--divider); margin-bottom: 10px; }
+        .sb-mark { width:36px; height:36px; border-radius:10px; background:var(--accent); color:#fff;
+                   font-weight:700; font-size:13px; display:flex; align-items:center; justify-content:center; }
+        .sb-name { font-weight:700; font-size:15px; letter-spacing:-.03em; color:var(--text-1); }
+        .sb-sub { font-size:11px; color:var(--text-3); margin-top:1px; }
 
         .stSelectbox [data-baseweb="select"] > div,
         .stMultiSelect [data-baseweb="select"] > div,
         .stNumberInput input, .stTextInput input, .stDateInput input, textarea {
-            background: #ffffff !important; color: #111827 !important;
-            border: 1px solid #e5e7eb !important; border-radius: 10px !important;
+            background: var(--surface) !important; color: var(--text-1) !important;
+            border: 1px solid var(--border) !important; border-radius: 10px !important;
         }
-        div[data-baseweb="select"] { background: #ffffff !important; }
-        div[data-baseweb="popover"] { background: #ffffff !important; color: #111827 !important; }
+        div[data-baseweb="select"] { background: var(--surface) !important; }
+        div[data-baseweb="popover"] { background: var(--surface) !important; color: var(--text-1) !important; }
 
         .stButton > button {
-            background: #ffffff !important; color: #111827 !important;
-            border: 1px solid #e5e7eb !important; border-radius: 10px !important;
+            background: var(--surface) !important; color: var(--text-1) !important;
+            border: 1px solid var(--border) !important; border-radius: 10px !important;
             font-weight: 650 !important; box-shadow: 0 1px 1px rgba(17,24,39,.04);
         }
         .stButton > button[kind="primary"],
         .stButton > button[data-testid="baseButton-primary"] {
-            background: #2563eb !important; color: #ffffff !important;
-            border: 1px solid #2563eb !important;
+            background: var(--accent) !important; color: #ffffff !important;
+            border: 1px solid var(--accent) !important;
         }
         .stDownloadButton > button {
-            background: #eff6ff !important; color: #1d4ed8 !important;
-            border: 1px solid #bfdbfe !important; border-radius: 10px !important; font-weight: 650 !important;
+            background: var(--accent-soft) !important; color: var(--accent-hover) !important;
+            border: 1px solid var(--accent-border) !important; border-radius: 10px !important; font-weight: 650 !important;
         }
 
         .stTabs [data-baseweb="tab-list"] {
-            gap: 6px; border-bottom: 1px solid #e8eaee; background: transparent;
+            gap: 6px; border-bottom: 1px solid var(--border); background: transparent;
         }
         .stTabs [data-baseweb="tab"] {
-            color: #6b7280 !important; font-weight: 650; padding: 10px 16px;
+            color: var(--text-3) !important; font-weight: 650; padding: 10px 16px;
             border-radius: 10px 10px 0 0;
         }
         .stTabs [aria-selected="true"] {
-            color: #2563eb !important; background: #eff6ff !important;
+            color: var(--accent) !important; background: var(--accent-soft) !important;
         }
 
-        h1, h2, h3, h4 { color: #111827 !important; letter-spacing: -0.03em; }
-        .stCaption, .stCaption p { color: #6b7280 !important; }
-        .stRadio label, .stCheckbox label, .stToggle label { color: #111827 !important; }
+        h1, h2, h3, h4 { color: var(--text-1) !important; letter-spacing: -0.03em; }
+        .stCaption, .stCaption p { color: var(--text-3) !important; }
+        .stRadio label, .stCheckbox label, .stToggle label { color: var(--text-1) !important; }
 
         [data-testid="stExpander"] {
-            background: #fff; border: 1px solid #e8eaee; border-radius: 14px;
+            background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
             margin-bottom: 8px;
         }
         div[data-testid="stAlert"] { border-radius: 12px; }
 
-        .app-top { display:flex; justify-content:space-between; align-items:flex-end;
-                   margin: 0 0 6px; }
-        .app-name { font-size: 26px; font-weight: 800; letter-spacing: -.04em; color:#111827; }
-        .app-sub { font-size: 13px; color:#6b7280; margin-top: 2px; }
+        .app-top { display:flex; justify-content:space-between; align-items:center;
+                   margin: 0 0 4px; gap: 12px; }
+        .app-brand { display:flex; align-items:center; gap:10px; flex-wrap: wrap; }
+        .demo-badge { display:inline-block; padding:3px 9px; border-radius:999px; font-size:12px;
+                      font-weight:600; background: var(--warn-soft); color: var(--warn);
+                      border: 1px solid var(--warn-border); }
+        .app-name { font-size: 20px; font-weight: 700; letter-spacing: -.02em; color:var(--text-1); }
+        .app-sub { font-size: 13px; color:var(--text-3); margin-top: 2px; }
         .page-head { margin: 4px 0 14px; }
-        .page-title { font-size: 22px; font-weight: 800; letter-spacing: -.03em; color:#111827; }
-        .page-sub { font-size: 13px; color:#6b7280; margin-top: 3px; }
-        .sec-h { font-size: 14px; font-weight: 700; color:#111827; margin: 18px 0 8px; }
-        .card-h { font-size: 15px; font-weight: 800; letter-spacing: -.02em; color:#111827;
-                  margin: 2px 0 10px; }
-        .card-sub { font-size: 12px; font-weight: 500; color:#9ca3af; margin: -6px 0 10px; }
+        .page-title { font-size: 22px; font-weight: 650; letter-spacing: -.02em; color:var(--text-1); }
+        .page-sub { font-size: 13.5px; color:var(--text-3); margin-top: 4px; }
+        .sec-h { font-size: 14px; font-weight: 700; color:var(--text-1); margin: 18px 0 8px; }
+        .card-h { font-size: 15px; font-weight: 600; letter-spacing: -.01em; color:var(--text-1);
+                  margin: 4px 0 10px; }
+        .card-sub { font-size: 13px; font-weight: 400; color:var(--text-3); margin: -6px 0 12px; }
 
         div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: #ffffff !important;
-            border: 1px solid #e8eaee !important;
-            border-radius: 16px !important;
-            padding: 10px 14px 14px !important;
-            box-shadow: 0 1px 2px rgba(17,24,39,.04);
-            margin-bottom: 14px;
+            background: var(--surface) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-lg) !important;
+            padding: 12px 18px 16px !important;
+            box-shadow: var(--shadow-xs);
+            margin-bottom: 16px;
         }
         [data-testid="stFileUploader"] {
-            background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 8px;
+            background: var(--surface-muted); border: 1px dashed var(--border-strong); border-radius: 12px; padding: 8px;
         }
         [data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] {
-            background: #2563eb !important; border-color: #2563eb !important;
+            background: var(--accent) !important; border-color: var(--accent) !important;
         }
         [data-testid="stDataEditor"] {
-            border: 1px solid #e8eaee; border-radius: 14px; overflow: hidden; background:#fff;
+            border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--surface);
         }
-        .sb-sec { font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
-                  color: #6b7280; background: #f8fafc; border: 1px solid #eef0f3;
+        .sb-sec { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+                  color: var(--text-3); background: var(--surface-muted); border: 1px solid var(--divider);
                   border-radius: 10px; padding: 8px 12px; margin: 14px 0 8px; }
 
         .tile {
-            background:
-              radial-gradient(130px 90px at 100% 0%, rgba(191,219,254,.55), transparent 62%),
-              radial-gradient(100px 80px at 0% 100%, rgba(167,243,208,.22), transparent 58%),
-              #ffffff;
-            border: 1px solid #e8eaee;
-            border-radius: 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
             padding: 16px 18px 14px;
             height: 100%;
-            box-shadow: 0 1px 2px rgba(17,24,39,.04);
+            box-shadow: var(--shadow-xs);
         }
-        .tile.tile-good {
-            background: radial-gradient(130px 90px at 100% 0%, rgba(167,243,208,.55), transparent 62%), #fff;
-        }
-        .tile.tile-bad {
-            background: radial-gradient(130px 90px at 100% 0%, rgba(254,202,202,.5), transparent 62%), #fff;
-        }
-        .tile-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-                      color: #9ca3af; margin-bottom: 8px; font-weight: 650; }
-        .tile.tile-good .tile-label { color: #059669; }
-        .tile.tile-bad .tile-label { color: #dc2626; }
-        .tile-value { font-size: 26px; font-weight: 800; color: #1f2937; line-height: 1.15;
-                      letter-spacing: -.03em; }
-        .tile.tile-good .tile-value { color: #059669; }
-        .tile.tile-bad .tile-value { color: #dc2626; }
-        .tile-sub { font-size: 12px; color: #9ca3af; margin-top: 6px; }
-        .pos { color: #059669 !important; }
-        .neg { color: #dc2626 !important; }
+        .tile-label { font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+                      color: var(--text-3); margin-bottom: 8px; font-weight: 600; }
+        .tile-value { font-size: 24px; font-weight: 650; color: var(--text-1); line-height: 1.2;
+                      letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+        .tile-value.pos { color: var(--pos); }
+        .tile-value.neg { color: var(--neg); }
+        .tile-sub { font-size: 12.5px; color: var(--text-3); margin-top: 6px; line-height: 1.4; }
+        .pos { color: var(--pos) !important; }
+        .neg { color: var(--neg) !important; }
         .note {
-            background: #eff6ff; border-left: 3px solid #2563eb;
-            padding: 10px 14px; border-radius: 8px; font-size: 13px; color: #1e3a8a;
+            background: var(--accent-soft); border-left: 3px solid var(--accent);
+            padding: 10px 14px; border-radius: 8px; font-size: 13px; color: var(--accent-hover);
         }
         .book-tools { background: transparent; border: none; padding: 0; margin: 0; }
 
         div[data-testid="stDataFrame"] {
-            border: 1px solid #e8eaee; border-radius: 14px; overflow: hidden;
-            background: #ffffff; box-shadow: 0 1px 2px rgba(17,24,39,.03);
+            border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+            background: var(--surface); box-shadow: var(--shadow-xs);
         }
-        div[data-testid="stDataFrame"] [data-testid="stDataFrameResizable"] { background:#fff; }
+        div[data-testid="stDataFrame"] [data-testid="stDataFrameResizable"] { background: var(--surface); }
 
-        .cal-wrap { background:#fff; border:1px solid #e8eaee; border-radius:18px;
+        .cal-wrap { background: var(--surface); border:1px solid var(--border); border-radius:var(--r-xl);
                     padding:18px 20px 14px; margin: 8px 0 18px;
-                    box-shadow: 0 1px 2px rgba(17,24,39,.04); }
-        .cal-kpis { display:flex; gap:0; border-bottom:1px solid #f3f4f6; margin:0 -20px 14px;
+                    box-shadow: var(--shadow-xs); }
+        .cal-kpis { display:flex; gap:0; border-bottom:1px solid var(--divider); margin:0 -20px 14px;
                     padding:0 8px 14px; overflow-x:auto; }
-        .cal-kpi { flex:1; min-width:118px; padding:4px 14px; border-right:1px solid #f3f4f6; }
+        .cal-kpi { flex:1; min-width:118px; padding:4px 14px; border-right:1px solid var(--divider); }
         .cal-kpi:last-child { border-right:none; }
         .cal-kpi .k { font-size:10px; letter-spacing:.08em; text-transform:uppercase;
-                      color:#9ca3af; font-weight:650; margin-bottom:6px; }
-        .cal-kpi .v { font-size:20px; font-weight:800; color:#111827; line-height:1.15; letter-spacing:-.03em; }
-        .cal-kpi .s { font-size:11px; color:#9ca3af; margin-top:3px; }
-        .cal-kpi .v.pos { color:#059669; }
-        .cal-kpi .v.neg { color:#dc2626; }
-        .cal-title { font-size:11px; font-weight:800; letter-spacing:.1em;
-                     text-transform:uppercase; color:#6b7280; margin: 4px 0 10px; }
+                      color:var(--text-3); font-weight:650; margin-bottom:6px; }
+        .cal-kpi .v { font-size:20px; font-weight:700; color:var(--text-1); line-height:1.15; letter-spacing:-.03em; }
+        .cal-kpi .s { font-size:11px; color:var(--text-3); margin-top:3px; }
+        .cal-kpi .v.pos { color:var(--pos); }
+        .cal-kpi .v.neg { color:var(--neg); }
+        .cal-title { font-size:11px; font-weight:700; letter-spacing:.1em;
+                     text-transform:uppercase; color:var(--text-3); margin: 4px 0 10px; }
         .cal-leg { display:flex; gap:14px; flex-wrap:wrap; align-items:center;
-                   font-size:12px; color:#6b7280; margin-bottom:12px; }
+                   font-size:12px; color:var(--text-3); margin-bottom:12px; }
         .cal-leg .cal-day { margin-right:4px; }
         .cal-grid { display:flex; gap:14px; overflow-x:auto; padding-bottom:6px; }
         .cal-month { min-width: 108px; }
-        .cal-mh { text-align:center; font-size:11px; font-weight:800; color:#374151;
+        .cal-mh { text-align:center; font-size:11px; font-weight:700; color:var(--text-2);
                   letter-spacing:.08em; text-transform:uppercase; margin-bottom:8px; }
         .cal-row { display:flex; align-items:center; gap:3px; margin:2px 0; }
-        .cal-wd { width:28px; font-size:10px; color:#9ca3af; }
+        .cal-wd { width:28px; font-size:10px; color:var(--text-3); }
         .cal-day { display:inline-flex; align-items:center; justify-content:center;
                    width:22px; height:20px; border-radius:999px; font-size:11px;
-                   color:#9ca3af; background:transparent; }
+                   color:var(--text-3); background:transparent; }
         .cal-empty { display:inline-block; width:22px; height:20px; }
-        .cal-lg { background:#047857; color:#fff; font-weight:700; }
-        .cal-sg { background:#6ee7b7; color:#065f46; font-weight:600; }
-        .cal-be { background:#fbbf24; color:#78350f; }
-        .cal-sl { background:#fecaca; color:#7f1d1d; }
-        .cal-ll { background:#b91c1c; color:#fff; font-weight:700; }
-        .cal-en { background:#bfdbfe; color:#1e3a8a; font-weight:600; }
-        .cal-note { font-size:11px; color:#9ca3af; margin-top:10px; }
+        .cal-lg { background:#0F7B55; color:#fff; font-weight:600; }
+        .cal-sg { background:#BFE3D1; color:#0B5E41; font-weight:600; }
+        .cal-be { background:#F2DDB0; color:#7A4D00; }
+        .cal-sl { background:#F2C9C6; color:#8A2A24; }
+        .cal-ll { background:#B93A32; color:#fff; font-weight:600; }
+        .cal-en { background:#C9D7F4; color:#234AA3; font-weight:600; }
+        .cal-note { font-size:11px; color:var(--text-3); margin-top:10px; }
         .ptable-wrap { overflow-x: auto; overflow-y: auto; max-height: 440px; width: 100%;
                        -webkit-overflow-scrolling: touch; }
         .ptable { width: 100%; border-collapse: collapse; table-layout: auto; }
         .ptable th { text-align: left; font-size: 11px; letter-spacing: .06em;
-                     text-transform: uppercase; color: #9ca3af; font-weight: 650;
-                     padding: 8px 10px; border-bottom: 1px solid #eef0f3; }
-        .ptable td { padding: 9px 10px; border-bottom: 1px solid #f3f4f6; color: #111827;
+                     text-transform: uppercase; color: var(--text-3); font-weight: 650;
+                     padding: 8px 10px; border-bottom: 1px solid var(--divider); }
+        .ptable td { padding: 9px 10px; border-bottom: 1px solid var(--divider); color: var(--text-1);
                      font-size: 13px; }
         .ptable td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
         .ptable tr:last-child td { border-bottom: none; }
-        .ptable-empty { color: #9ca3af; font-size: 13px; padding: 8px 0; }
+        .ptable-empty { color: var(--text-3); font-size: 13px; padding: 8px 0; }
 
         .saas-wrap { width:100%; overflow-x:auto; }
         .saas-table { width:100%; border-collapse:collapse; }
         .saas-table th {
             text-align:left; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
-            color:#9ca3af; font-weight:650; padding:10px 12px; border-bottom:1px solid #eef0f3;
+            color:var(--text-3); font-weight:650; padding:10px 12px; border-bottom:1px solid var(--divider);
             white-space:nowrap;
         }
         .saas-table th.num { text-align:right; }
         .saas-table td {
-            padding:14px 12px; border-bottom:1px solid #f3f4f6; color:#111827;
+            padding:14px 12px; border-bottom:1px solid var(--divider); color:var(--text-1);
             font-size:14px; vertical-align:middle;
         }
         .saas-table tr:last-child td { border-bottom:none; }
@@ -447,10 +463,10 @@ def inject_css(dark: bool) -> None:
         .saas-stock { display:flex; gap:10px; align-items:center; }
         .saas-av { width:36px; height:36px; min-width:36px; border-radius:50%;
                    display:inline-flex; align-items:center; justify-content:center;
-                   font-weight:800; color:#fff; font-size:13px; letter-spacing:-.02em; }
+                   font-weight:700; color:#fff; font-size:13px; letter-spacing:-.02em; }
         .saas-sym { font-weight:700; letter-spacing:-.02em; line-height:1.2; }
-        .saas-sub { font-size:12px; color:#9ca3af; margin-top:2px; }
-        .saas-next { font-size:12px; color:#4b5563; max-width:160px; line-height:1.35; }
+        .saas-sub { font-size:12px; color:var(--text-3); margin-top:2px; }
+        .saas-next { font-size:12px; color:var(--text-2); max-width:160px; line-height:1.35; }
         .m-lab { display: none; }
         .m-val { display: inline; }
         .hold-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
@@ -463,16 +479,16 @@ def inject_css(dark: bool) -> None:
         .hold-compact { width: 100%; border-collapse: collapse; font-size: 13px; }
         .hold-compact th {
             text-align: left; font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
-            color: #9ca3af; font-weight: 700; padding: 8px 6px; border-bottom: 1px solid #eef0f3;
+            color: var(--text-3); font-weight: 700; padding: 8px 6px; border-bottom: 1px solid var(--divider);
             white-space: nowrap;
         }
         .hold-compact th.num, .hold-compact td.num { text-align: right; }
         .hold-compact td {
-            padding: 10px 6px; border-bottom: 1px solid #f3f4f6; vertical-align: middle;
+            padding: 10px 6px; border-bottom: 1px solid var(--divider); vertical-align: middle;
         }
-        .hold-compact td.next { font-size: 11px; color: #4b5563; white-space: normal; max-width: 120px; }
+        .hold-compact td.next { font-size: 11px; color: var(--text-2); white-space: normal; max-width: 120px; }
         .hold-compact .saas-av { width: 24px; height: 24px; min-width: 24px; font-size: 11px; }
-        .hold-compact tfoot td { font-size: 12px; color: #4b5563; border-bottom: none; padding-top: 10px; }
+        .hold-compact tfoot td { font-size: 12px; color: var(--text-2); border-bottom: none; padding-top: 10px; }
         @media (max-width: 768px) {
             #MainMenu, .stDeployButton, [data-testid="stAppDeployButton"] { display: none !important; }
             [data-testid="stMain"], section.main,
@@ -498,62 +514,56 @@ def inject_css(dark: bool) -> None:
                 z-index: 2147483646 !important;
                 width: 44px !important;
                 height: 44px !important;
-                background: #fff !important;
-                border: 1px solid #e5e7eb !important;
+                background: var(--surface) !important;
+                border: 1px solid var(--border) !important;
                 border-radius: 10px !important;
                 box-shadow: 0 1px 3px rgba(17,24,39,.12) !important;
             }
         }
         .hold-card {
-            background: #fff; border: 1px solid #e8eaee; border-radius: 16px;
-            padding: 14px 14px 8px; box-shadow: 0 1px 2px rgba(17,24,39,.04);
+            background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+            padding: 14px 14px 8px; box-shadow: var(--shadow-xs);
         }
-        .hold-head { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #f3f4f6; }
+        .hold-head { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--divider); }
         .hold-kvs { display: flex; flex-direction: column; }
         .kv { display: flex; justify-content: space-between; align-items: flex-start;
-              gap: 10px; padding: 7px 0; border-bottom: 1px solid #f3f4f6; }
+              gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--divider); }
         .kv:last-child { border-bottom: none; }
         .kv span { font-size: 11px; font-weight: 700; letter-spacing: .06em;
-                   text-transform: uppercase; color: #9ca3af; flex: 0 0 42%; padding-top: 2px; }
-        .kv b { font-weight: 650; text-align: right; flex: 1; font-size: 14px; color: #111827; }
-        .kv.pos b { color: #047857; }
-        .kv.neg b { color: #b91c1c; }
-        .hold-foot { grid-column: 1 / -1; font-size: 13px; color: #4b5563;
+                   text-transform: uppercase; color: var(--text-3); flex: 0 0 42%; padding-top: 2px; }
+        .kv b { font-weight: 650; text-align: right; flex: 1; font-size: 14px; color: var(--text-1); }
+        .kv.pos b { color: var(--pos); }
+        .kv.neg b { color: var(--neg); }
+        .hold-foot { grid-column: 1 / -1; font-size: 13px; color: var(--text-2);
                      padding: 8px 4px 0; }
         .badge { display:inline-block; padding:3px 9px; border-radius:999px;
                  font-size:11px; font-weight:700; letter-spacing:.04em; }
-        .badge-buy { background:#ecfdf5; color:#047857; }
-        .badge-sell { background:#fef2f2; color:#b91c1c; }
+        .badge-buy { background:var(--pos-soft); color:var(--pos); }
+        .badge-sell { background:var(--neg-soft); color:var(--neg); }
         .act-banner {
-            border-radius: 18px; padding: 18px 20px 14px; margin: 4px 0 16px;
-            border: 1px solid #e8eaee; background: #fff;
-            box-shadow: 0 1px 2px rgba(17,24,39,.04);
+            border-radius: var(--r-xl); padding: 18px 20px 14px 22px; margin: 4px 0 16px;
+            border: 1px solid var(--border); background: var(--surface);
+            box-shadow: var(--shadow-xs); border-left: 3px solid var(--border-strong);
         }
-        .act-banner.hot {
-            background: radial-gradient(420px 160px at 100% 0%, rgba(254,202,202,.45), transparent 70%), #fff;
-            border-color: #fecaca;
-        }
-        .act-banner.ok {
-            background: radial-gradient(420px 160px at 100% 0%, rgba(167,243,208,.4), transparent 70%), #fff;
-            border-color: #a7f3d0;
-        }
+        .act-banner.hot { border-left-color: var(--neg); }
+        .act-banner.ok { border-left-color: var(--pos); }
         .act-kicker { font-size:11px; letter-spacing:.1em; text-transform:uppercase;
-                      font-weight:800; color:#9ca3af; margin-bottom:4px; }
-        .act-banner.hot .act-kicker { color:#b91c1c; }
-        .act-banner.ok .act-kicker { color:#047857; }
-        .act-headline { font-size:26px; font-weight:800; letter-spacing:-.03em;
-                        color:#111827; line-height:1.2; }
-        .act-sub { font-size:14px; color:#4b5563; margin-top:4px; margin-bottom:12px; }
+                      font-weight:700; color:var(--text-3); margin-bottom:4px; }
+        .act-banner.hot .act-kicker { color:var(--neg); }
+        .act-banner.ok .act-kicker { color:var(--pos); }
+        .act-headline { font-size:22px; font-weight:650; letter-spacing:-.03em;
+                        color:var(--text-1); line-height:1.2; }
+        .act-sub { font-size:14px; color:var(--text-2); margin-top:4px; margin-bottom:12px; }
         .act-row { display:flex; align-items:center; gap:12px; padding:10px 0;
-                   border-top:1px solid #f3f4f6; }
-        .act-row .sym { font-weight:800; min-width:110px; }
-        .act-why { flex:1; color:#374151; font-size:14px; }
-        .act-meta { font-variant-numeric:tabular-nums; font-size:13px; color:#6b7280;
+                   border-top:1px solid var(--divider); }
+        .act-row .sym { font-weight:700; min-width:110px; }
+        .act-why { flex:1; color:var(--text-2); font-size:14px; }
+        .act-meta { font-variant-numeric:tabular-nums; font-size:13px; color:var(--text-3);
                     white-space:nowrap; text-align:right; }
         .tag { display:inline-block; padding:3px 9px; border-radius:999px;
-               font-size:11px; font-weight:800; letter-spacing:.04em; }
-        .tag-book { background:#ecfdf5; color:#047857; }
-        .tag-sl { background:#fef2f2; color:#b91c1c; }
+               font-size:11px; font-weight:700; letter-spacing:.04em; }
+        .tag-book { background:var(--pos-soft); color:var(--pos); }
+        .tag-sl { background:var(--neg-soft); color:var(--neg); }
 
         .kpi-grid {
             display: grid;
@@ -596,7 +606,7 @@ def inject_css(dark: bool) -> None:
             }
             .ptable th:first-child, .ptable td:first-child,
             .saas-table th:first-child, .saas-table td:first-child {
-                position: sticky; left: 0; background: #fff; z-index: 1;
+                position: sticky; left: 0; background: var(--surface); z-index: 1;
             }
             [data-testid="stAppViewContainer"] { display: block !important; }
             section.main, [data-testid="stMain"],
@@ -710,12 +720,12 @@ def inject_css(dark: bool) -> None:
                 display: block; width: 100%;
             }
             .saas-table tr, .ptable tr {
-                background: #fff;
-                border: 1px solid #e8eaee;
+                background: var(--surface);
+                border: 1px solid var(--border);
                 border-radius: 14px;
                 margin: 0 0 10px;
                 padding: 8px 10px 6px;
-                box-shadow: 0 1px 2px rgba(17,24,39,.04);
+                box-shadow: var(--shadow-xs);
             }
             .saas-table td, .ptable td {
                 display: flex;
@@ -724,7 +734,7 @@ def inject_css(dark: bool) -> None:
                 gap: 12px;
                 text-align: right !important;
                 padding: 7px 4px !important;
-                border-bottom: 1px solid #f3f4f6 !important;
+                border-bottom: 1px solid var(--divider) !important;
                 font-size: 14px;
                 white-space: normal !important;
             }
@@ -736,7 +746,7 @@ def inject_css(dark: bool) -> None:
                 font-weight: 700;
                 letter-spacing: .06em;
                 text-transform: uppercase;
-                color: #9ca3af;
+                color: var(--text-3);
                 text-align: left;
                 flex: 0 0 42%;
                 padding-top: 2px;
@@ -1316,7 +1326,7 @@ def load_index_buckets(symbols: tuple[str, ...], demo: bool):
 # A key that is missing from a saved set falls back to the widget's own default,
 # which is what lets an old set survive a new control being added.
 PARAM_KEYS: tuple[str, ...] = (
-    "p_dark", "p_uni_src", "p_index", "p_bundled", "p_demo",
+    "p_uni_src", "p_index", "p_bundled", "p_demo",
     "p_lookback", "p_fresh", "p_ema_fast", "p_ema_slow",
     "p_w_fresh", "p_w_vol", "p_w_mom",
     "p_fund_on", "p_fund_weight", "p_fund_rank", "p_fund_bt",
@@ -1603,7 +1613,6 @@ def sidebar() -> dict:
                 pass
         params_ui()
         data_folder_ui()
-        s["dark"] = False
 
 
         # ---------------- universe ---------------- #
@@ -2943,9 +2952,9 @@ def chartink_ui() -> None:
 # --------------------------------------------------------------------------- #
 # charts
 # --------------------------------------------------------------------------- #
-def equity_figure(equity: pd.Series, bench: pd.Series | None, dark: bool,
+def equity_figure(equity: pd.Series, bench: pd.Series | None,
                   pct: bool = False) -> go.Figure:
-    t = ch.theme(dark)
+    t = ch.theme()
     fig = go.Figure()
     y = equity.values.astype(float)
     start = float(y[0]) if len(y) else 0.0
@@ -2986,8 +2995,8 @@ def equity_figure(equity: pd.Series, bench: pd.Series | None, dark: bool,
     return fig
 
 
-def drawdown_figure(equity: pd.Series, dark: bool) -> go.Figure:
-    t = ch.theme(dark)
+def drawdown_figure(equity: pd.Series) -> go.Figure:
+    t = ch.theme()
     dd = M.drawdown_series(equity) * 100
     fig = go.Figure(go.Scatter(x=dd.index, y=dd.values, fill="tozeroy",
                                 line=dict(color=t["critical"], width=1.4),
@@ -3107,8 +3116,8 @@ def trading_calendar_html(book: jn.Book, year: int, kpis: list | None = None) ->
     )
 
 
-def weekly_pnl_figure(rt: pd.DataFrame, dark: bool) -> go.Figure:
-    t = ch.theme(dark)
+def weekly_pnl_figure(rt: pd.DataFrame) -> go.Figure:
+    t = ch.theme()
     fig = go.Figure()
     if rt is None or rt.empty:
         fig.update_layout(template="plotly_white", height=220)
@@ -3130,8 +3139,8 @@ def weekly_pnl_figure(rt: pd.DataFrame, dark: bool) -> go.Figure:
     return fig
 
 
-def donut_figure(title: str, labels, values, colors, dark: bool, center: str) -> go.Figure:
-    t = ch.theme(dark)
+def donut_figure(title: str, labels, values, colors, center: str) -> go.Figure:
+    t = ch.theme()
     fig = go.Figure(go.Pie(
         labels=list(labels), values=list(values), hole=0.68,
         marker=dict(colors=list(colors)),
@@ -3151,8 +3160,8 @@ def donut_figure(title: str, labels, values, colors, dark: bool, center: str) ->
     return fig
 
 
-def exit_reason_figure(rb: pd.DataFrame, dark: bool) -> go.Figure:
-    t = ch.theme(dark)
+def exit_reason_figure(rb: pd.DataFrame) -> go.Figure:
+    t = ch.theme()
     fig = go.Figure()
     if rb is None or rb.empty:
         return fig
@@ -3302,8 +3311,8 @@ def tab_backtest(s: dict) -> None:
     ])
 
     st.markdown("")
-    show_chart(equity_figure(eq, st.session_state.get("bt_bench"), s["dark"]))
-    show_chart(drawdown_figure(eq, s["dark"]))
+    show_chart(equity_figure(eq, st.session_state.get("bt_bench")))
+    show_chart(drawdown_figure(eq))
 
     trades = res.trades
     n_buys = int((trades["side"] == "BUY").sum()) if not trades.empty else 0
@@ -3344,7 +3353,7 @@ def tab_backtest(s: dict) -> None:
     with card("Year by year"):
         yb = yearly_breakdown(res)
         if not yb.empty:
-            show_chart(ch.yearly_bars(yb.rename(columns={"Return (%)": "Return (%)"}), s["dark"]))
+            show_chart(ch.yearly_bars(yb.rename(columns={"Return (%)": "Return (%)"})))
             show_df(yb.style.format({
                 "Return (%)": "{:,.2f}", "Start Capital": "₹{:,.0f}", "End Capital": "₹{:,.0f}",
                 "Net Profit": "₹{:,.0f}", "Max drawdown %": "{:,.2f}",
@@ -3357,7 +3366,7 @@ def tab_backtest(s: dict) -> None:
     with card("Month by month"):
         mt = M.monthly_table(eq)
         if not mt.empty:
-            show_chart(ch.monthly_heatmap(mt, s["dark"]))
+            show_chart(ch.monthly_heatmap(mt))
         mb = monthly_breakdown(res)
         if not mb.empty:
             st.caption("**Max capital used** is the peak cost of open positions during that month — "
@@ -4372,11 +4381,11 @@ def tab_journal(s: dict) -> None:
                              horizontal=True, key="eq_mode")
             g1, g2 = st.columns([1.7, 1])
             with g1:
-                show_chart(equity_figure(eq, None, s["dark"], pct=mode.startswith("%")))
+                show_chart(equity_figure(eq, None, pct=mode.startswith("%")))
             with g2:
-                show_chart(drawdown_figure(eq, s["dark"]))
+                show_chart(drawdown_figure(eq))
                 if len(rt):
-                    show_chart(weekly_pnl_figure(rt, s["dark"]))
+                    show_chart(weekly_pnl_figure(rt))
 
         if len(rt):
             mt = js.monthly_trade_table(rt)
@@ -4388,7 +4397,7 @@ def tab_journal(s: dict) -> None:
                 show_money_df(yt, money_cols=("P&L ₹", "Capital"),
                               pct_cols=("Win %", "P&L %", "Avg gain", "Avg loss"))
             if not mt.empty:
-                t = ch.theme(False)
+                t = ch.theme()
                 fig = go.Figure(go.Bar(
                     x=mt["Month"], y=mt["P&L %"],
                     marker_color=[t["good"] if v >= 0 else t["critical"] for v in mt["P&L %"]],
@@ -4421,7 +4430,7 @@ def tab_journal(s: dict) -> None:
         losses = int((rt["P&L"] <= 0).sum())
         wr = st_["Win rate %"] if np.isfinite(st_["Win rate %"]) else 0
         rr = st_.get("Risk-reward", np.nan)
-        t = ch.theme(s["dark"])
+        t = ch.theme()
         v1, v2 = st.columns(2)
         with v1:
             with card("Strike rate"):
@@ -4430,7 +4439,6 @@ def tab_journal(s: dict) -> None:
                     ["Winners", "Losers"],
                     [max(wins, 0), max(losses, 0)],
                     [t["good"], t["critical"]],
-                    s["dark"],
                     f"{wr:,.0f}%" if np.isfinite(wr) else "—",
                 ))
         with v2:
@@ -4446,7 +4454,6 @@ def tab_journal(s: dict) -> None:
                     ["Avg win %", "Avg loss %"],
                     [aw or 0.01, al or 0.01],
                     [t["good"], t["series"][3]],
-                    s["dark"],
                     f"1 : {_safe_ratio(rr)}" if np.isfinite(rr) else "—",
                 ))
 
@@ -4455,7 +4462,7 @@ def tab_journal(s: dict) -> None:
         st.caption("Profit targets, the 20 EMA break, the 50 EMA break — what each rung actually "
                    "paid.")
         if not rb.empty:
-            show_chart(exit_reason_figure(rb, s["dark"]))
+            show_chart(exit_reason_figure(rb))
             show_df(rb)
 
     pb = js.partial_booking(rt)
@@ -4596,9 +4603,9 @@ def tab_journal(s: dict) -> None:
     eq = jn.equity_points(book)
     if len(eq) > 1:
         st.markdown("##### Cash after every fill")
-        t = ch.theme(s["dark"])
+        t = ch.theme()
         fig = go.Figure(go.Scatter(x=eq.index, y=eq.values, line=dict(color=t["series"][0], width=2)))
-        fig.update_layout(template="plotly_dark" if s["dark"] else "plotly_white",
+        fig.update_layout(template="plotly_white",
                           paper_bgcolor=t["surface"], plot_bgcolor=t["surface"], height=260,
                           margin=dict(l=10, r=10, t=20, b=10),
                           yaxis=dict(gridcolor=t["grid"]), xaxis=dict(gridcolor=t["grid"]))
@@ -4654,7 +4661,7 @@ def tab_universe(s: dict) -> None:
         st.caption(n)
 
     with card("How many stocks pass the screen over time"):
-        t = ch.theme(s["dark"])
+        t = ch.theme()
         fig = go.Figure(go.Scatter(x=res.counts.index, y=res.counts.values,
                                     line=dict(color=t["series"][1], width=1.5)))
         fig.update_layout(template="plotly_white",
@@ -4679,20 +4686,22 @@ def tab_universe(s: dict) -> None:
 def main() -> None:
     hydrate_books_from_browser()
     s = sidebar()
-    inject_css(s["dark"])
+    inject_css()
 
-    st.markdown(
-        '<div class="app-top"><div><div class="app-name">Breakout Lab</div>'
-        '<div class="app-sub">Weekly N-week-high breakouts on NSE · tiered booking · EMA trail · journal</div>'
-        '</div></div>',
-        unsafe_allow_html=True,
-    )
-    with st.popover("Backup / Import"):
-        book_tools_ui(current_book(), "hdr")
-
-    if s["demo"]:
-        st.warning("**Demo mode is on.** Prices are synthetic. Nothing here means anything "
-                   "about real stocks.")
+    demo = ('<span class="demo-badge" title="Prices are synthetic. Nothing here means anything '
+            'about real stocks.">Demo mode — synthetic prices</span>') if s["demo"] else ""
+    h1, h2 = st.columns([5, 1], vertical_alignment="center")
+    with h1:
+        st.markdown(
+            '<div class="app-top"><div><div class="app-brand"><span class="app-name">Breakout Lab'
+            f'</span>{demo}</div>'
+            '<div class="app-sub">Weekly N-week-high breakouts on NSE · tiered booking · EMA trail · journal</div>'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+    with h2:
+        with st.popover("Backup / Import", icon=":material/backup:", **_WIDE):
+            book_tools_ui(current_book(), "hdr")
 
     t1, t2, t3, t4, t5 = st.tabs([
         "Backtest", "This week", "Positions", "Journal", "Universe",

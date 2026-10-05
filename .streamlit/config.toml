@@ -1,0 +1,20 @@
+# Breakout Lab — light theme ("Calm Slate"). Light only, by design.
+# One accent colour: every Streamlit control (toggles, radios, sliders, tabs,
+# primary buttons, progress bars) takes it from here instead of the default red.
+[theme]
+base = "light"
+primaryColor = "#2B59C3"
+backgroundColor = "#F5F7FA"
+secondaryBackgroundColor = "#EEF1F5"
+textColor = "#1A2233"
+linkColor = "#2B59C3"
+borderColor = "#E3E8EF"
+dataframeBorderColor = "#EDF1F5"
+baseRadius = "8px"
+showWidgetBorder = true
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+
+[theme.sidebar]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F7FA"

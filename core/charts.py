@@ -40,25 +40,9 @@ LIGHT = {
     "critical": "#dc2626",
 }
 
-DARK = {
-    "surface": "#1a1a19",
-    "plane": "#0d0d0d",
-    "text": "#ffffff",
-    "text2": "#c3c2b7",
-    "muted": "#898781",
-    "grid": "#2c2c2a",
-    "axis": "#383835",
-    "series": ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
-    "pos": "#3987e5",
-    "neg": "#d03b3b",
-    "mid": "#383835",
-    "good": "#0ca30c",
-    "critical": "#d03b3b",
-}
-
-
-def theme(dark: bool = True) -> dict:
-    return DARK if dark else LIGHT
+def theme() -> dict:
+    """The one chart theme. The app is light-only by design."""
+    return LIGHT
 
 
 FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
@@ -111,10 +95,9 @@ def equity_chart(
     equity: pd.Series,
     benchmark: pd.Series | None,
     invested: pd.Series | None,
-    dark: bool = True,
     title: str = "Portfolio vs benchmark",
 ) -> go.Figure:
-    t = theme(dark)
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=equity.index, y=equity.values, name="Portfolio", mode="lines",
@@ -137,10 +120,10 @@ def equity_chart(
     return _base(fig, t, title, 440, "Capital (Rs)")
 
 
-def growth_chart(twr: pd.Series, bench_twr: pd.Series | None, dark: bool = True) -> go.Figure:
+def growth_chart(twr: pd.Series, bench_twr: pd.Series | None) -> go.Figure:
     """Growth of Rs 100 — cashflow effects removed, so this is the honest
     strategy-vs-index comparison."""
-    t = theme(dark)
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=twr.index, y=(twr / twr.iloc[0] * 100).values, name="Strategy", mode="lines",
@@ -158,8 +141,8 @@ def growth_chart(twr: pd.Series, bench_twr: pd.Series | None, dark: bool = True)
     return fig
 
 
-def underwater_chart(dd: pd.Series, bench_dd: pd.Series | None, dark: bool = True) -> go.Figure:
-    t = theme(dark)
+def underwater_chart(dd: pd.Series, bench_dd: pd.Series | None) -> go.Figure:
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=dd.index, y=(dd * 100).values, name="Strategy", mode="lines",
@@ -176,9 +159,9 @@ def underwater_chart(dd: pd.Series, bench_dd: pd.Series | None, dark: bool = Tru
     return _base(fig, t, "Underwater plot — how far below the previous peak", 340, "Drawdown (%)")
 
 
-def monthly_heatmap(table: pd.DataFrame, dark: bool = True, title: str = "Monthly returns (%)") -> go.Figure:
+def monthly_heatmap(table: pd.DataFrame, title: str = "Monthly returns (%)") -> go.Figure:
     """Diverging blue (gain) ↔ red (loss) with a neutral midpoint at zero."""
-    t = theme(dark)
+    t = theme()
     if table.empty:
         return _base(go.Figure(), t, title, 260)
     z = table.values.astype(float)
@@ -203,8 +186,8 @@ def monthly_heatmap(table: pd.DataFrame, dark: bool = True, title: str = "Monthl
     return fig
 
 
-def yearly_bars(yearly: pd.DataFrame, dark: bool = True) -> go.Figure:
-    t = theme(dark)
+def yearly_bars(yearly: pd.DataFrame) -> go.Figure:
+    t = theme()
     if yearly.empty:
         return _base(go.Figure(), t, "Year-wise return", 300)
     vals = yearly["Return (%)"].astype(float)
@@ -221,7 +204,7 @@ def yearly_bars(yearly: pd.DataFrame, dark: bool = True) -> go.Figure:
     return fig
 
 
-def allocation_area(weights: pd.DataFrame, labels: dict[str, str] | None, dark: bool = True,
+def allocation_area(weights: pd.DataFrame, labels: dict[str, str] | None,
                     max_series: int = 7) -> go.Figure:
     """Stacked exposure through time.
 
@@ -230,7 +213,7 @@ def allocation_area(weights: pd.DataFrame, labels: dict[str, str] | None, dark: 
     an eighth named series would have to reuse a hue, and two identically
     coloured bands in one stack is worse than no breakdown at all. Cash sits on
     the neutral grey, which is not a categorical slot."""
-    t = theme(dark)
+    t = theme()
     if weights.empty:
         return _base(go.Figure(), t, "Allocation over time", 340)
     w = weights.copy() * 100
@@ -259,9 +242,9 @@ def allocation_area(weights: pd.DataFrame, labels: dict[str, str] | None, dark: 
     return _base(fig, t, "Allocation over time (% of capital)", 380, "Weight (%)")
 
 
-def rolling_chart(series: pd.Series, title: str, ytitle: str, dark: bool = True,
+def rolling_chart(series: pd.Series, title: str, ytitle: str,
                   ref: float | None = None) -> go.Figure:
-    t = theme(dark)
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=series.index, y=series.values, mode="lines", name=title,
@@ -275,10 +258,10 @@ def rolling_chart(series: pd.Series, title: str, ytitle: str, dark: bool = True,
     return fig
 
 
-def factor_contribution(scored: pd.DataFrame, weights: dict[str, float], dark: bool = True,
+def factor_contribution(scored: pd.DataFrame, weights: dict[str, float],
                         top_n: int = 15) -> go.Figure:
     """Which factor pushed which name up the ranking, at one point in time."""
-    t = theme(dark)
+    t = theme()
     if scored is None or scored.empty:
         return _base(go.Figure(), t, "Factor contribution", 340)
     rows = scored.head(top_n)
@@ -299,9 +282,9 @@ def factor_contribution(scored: pd.DataFrame, weights: dict[str, float], dark: b
     return fig
 
 
-def scatter_risk_return(points: pd.DataFrame, dark: bool = True) -> go.Figure:
+def scatter_risk_return(points: pd.DataFrame) -> go.Figure:
     """points: index=label, columns=['vol','cagr'] as fractions."""
-    t = theme(dark)
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=points["vol"] * 100, y=points["cagr"] * 100, mode="markers+text",
@@ -316,7 +299,7 @@ def scatter_risk_return(points: pd.DataFrame, dark: bool = True) -> go.Figure:
     return fig
 
 
-def universe_size_chart(timeline: pd.DataFrame, dark: bool = True) -> go.Figure:
+def universe_size_chart(timeline: pd.DataFrame) -> go.Figure:
     """How many names passed the screen at each rebalance.
 
     A flat line means your filter is really just picking a fixed list. A line
@@ -324,7 +307,7 @@ def universe_size_chart(timeline: pd.DataFrame, dark: bool = True) -> go.Figure:
     the strategy was operating in genuinely different opportunity sets at
     different times, which is the honest picture.
     """
-    t = theme(dark)
+    t = theme()
     if timeline is None or timeline.empty:
         return _base(go.Figure(), t, "Universe size over time", 300)
     fig = go.Figure()
@@ -340,9 +323,9 @@ def universe_size_chart(timeline: pd.DataFrame, dark: bool = True) -> go.Figure:
     return fig
 
 
-def universe_churn_chart(timeline: pd.DataFrame, dark: bool = True) -> go.Figure:
+def universe_churn_chart(timeline: pd.DataFrame) -> go.Figure:
     """Entries and exits per rebalance — the churn the screen imposes."""
-    t = theme(dark)
+    t = theme()
     if timeline is None or timeline.empty:
         return _base(go.Figure(), t, "Universe churn", 300)
     fig = go.Figure()
