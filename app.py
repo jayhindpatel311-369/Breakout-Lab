@@ -175,7 +175,9 @@ def period_table_html(df: pd.DataFrame, kind: str) -> str:
     if df is None or df.empty:
         return '<div class="ptable-empty">No rows yet.</div>'
     label = {"year": "Year", "month": "Month", "week": "Week"}[kind]
-    head = "".join(f"<th>{c}</th>" for c in [label, "Start", "End", "Return %", "P&L", "Drawdown %"])
+    # a number column's heading sits over its numbers: right-aligned like them
+    head = "".join(f'<th{"" if c == label else " class=num"}>{c}</th>'
+                   for c in [label, "Start", "End", "Return %", "P&L", "Drawdown %"])
     rows = []
     for _, r in df.iterrows():
         period = _pretty_period(r.get(label), kind)
@@ -580,6 +582,7 @@ def inject_css() -> None:
         .ptable td { padding: 9px 10px; border-bottom: 1px solid var(--divider); color: var(--text-1);
                      font-size: 13px; }
         .ptable td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .ptable th.num { text-align: right; }
         .ptable tr:last-child td { border-bottom: none; }
         .ptable-empty { color: var(--text-3); font-size: 13px; padding: 8px 0; }
 
@@ -1230,12 +1233,23 @@ def saas_fills_html(df: pd.DataFrame) -> str:
             f'<tbody>{"".join(rows)}</tbody></table></div>')
 
 
+_NUMERIC_TEXT = __import__("re").compile(r"^[+\-−]?₹?\s?[+\-−]?[\d,]*\.?\d+\s?(%|L|cr|x)?$")
+
+
+def _looks_numeric(col: pd.Series) -> bool:
+    """A column of already-formatted amounts — "₹262.93", "+3.0%", "₹1.98 L",
+    "—" for blanks — is still a number column and is aligned like one."""
+    vals = [str(v).strip() for v in col.dropna() if str(v).strip() not in ("", "—", "-")]
+    return bool(vals) and all(_NUMERIC_TEXT.match(v) for v in vals)
+
+
 def saas_simple_html(df: pd.DataFrame, money=(), pct=()) -> str:
     if df is None or df.empty:
         return '<div class="ptable-empty">No rows yet.</div>'
     cols = list(df.columns)
     def _is_num(c):
-        return c in money or c in pct or pd.api.types.is_numeric_dtype(df[c])
+        return (c in money or c in pct or pd.api.types.is_numeric_dtype(df[c])
+                or _looks_numeric(df[c]))
     th = "".join(f'<th{" class=num" if _is_num(c) else ""}>{_esc(c)}</th>' for c in cols)
     rows = []
     for _, r in df.iterrows():
@@ -1262,7 +1276,8 @@ def saas_simple_html(df: pd.DataFrame, money=(), pct=()) -> str:
                     shown = f"{int(v):,}"
                 else:
                     shown = _esc(v)
-                num = isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool)
+                num = (isinstance(v, (int, float, np.integer, np.floating))
+                       and not isinstance(v, bool)) or _is_num(c)
                 tds.append(_td(str(c), shown, "num" if num else ""))
         rows.append("<tr>" + "".join(tds) + "</tr>")
     return (f'<div class="saas-wrap"><table class="saas-table"><thead><tr>{th}</tr></thead>'
