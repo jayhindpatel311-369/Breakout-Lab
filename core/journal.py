@@ -95,6 +95,11 @@ class Book:
     and reported on its own line."""
     corrections: list[dict] = field(default_factory=list)
     cash_flows: list[dict] = field(default_factory=list)
+    charges: list[dict] = field(default_factory=list)
+    """Brokerage, STT and other charges as your contract notes / broker P&L
+    statement show them, one entry per month ({"month": "YYYY-MM", "amount",
+    "note"}). Entered by hand: an estimate from rates is never what the broker
+    actually billed."""
     sizing_capital: float = 0.0
     compound_step: float = 120_000.0
     compound_buffer_pct: float = 20.0
@@ -155,6 +160,20 @@ class Book:
             "amount": round(amount, 0),
             "note": note,
         })
+
+    # --------------------------------------------------------------- charges --
+    def set_charge(self, month, amount: float, note: str = "") -> dict:
+        """Record one month's charges, replacing whatever that month had."""
+        key = pd.Timestamp(month).strftime("%Y-%m")
+        self.charges = [c for c in self.charges if c.get("month") != key]
+        rec = {"month": key, "amount": round(float(amount), 2), "note": str(note or "")}
+        if rec["amount"]:
+            self.charges.append(rec)
+        self.charges.sort(key=lambda c: c["month"])
+        return rec
+
+    def total_charges(self) -> float:
+        return float(sum(float(c.get("amount") or 0.0) for c in self.charges))
 
     # ---------------------------------------------------------------- drafts --
     def draft_symbols(self) -> set[str]:
@@ -348,14 +367,16 @@ class Book:
         return rec
 
     def edit_exit_fill(self, symbol: str, entry_date, sell_date, qty: int, old_price: float,
-                        rung: str, new_price: float, note: str = "") -> dict | None:
+                        rung: str, new_price: float, note: str = "",
+                        new_date=None) -> dict | None:
         """Correct an already-recorded exit's fill price.
 
         For when the app's price and the broker's actual print differed and the
         exit was saved before you caught it (the "fill price" box in *Record
         these fills* is editable before you save — this is for after). Only the
-        price changes; qty, date and rung stay put, and everything downstream of
-        price (proceeds, P&L, cash) is recomputed from it.
+        price — and, with `new_date`, the exit date — change; qty and rung stay
+        put, and everything downstream of price (proceeds, P&L, cash) is
+        recomputed from it. A new date may not fall before the entry date.
 
         A SELL's ledger row and its mirror in the position's own `fills` list are
         the same dict while the book stays in memory, but become separate copies
@@ -388,11 +409,16 @@ class Book:
 
         new_price = float(new_price)
         entry_price = float(hit["entry_price"])
+        old_date = str(pd.Timestamp(hit["date"]).date())
+        moved = str(pd.Timestamp(new_date).date()) if new_date is not None else old_date
+        if pd.Timestamp(moved) < pd.Timestamp(pos.entry_date).normalize():
+            return None
         old_value, old_pnl = float(hit["value"]), float(hit["pnl"])
         new_value = round(int(qty) * new_price, 2)
         new_pnl = round((new_price - entry_price) * int(qty), 2)
         new_gain_pct = round((new_price / entry_price - 1) * 100, 2) if entry_price else 0.0
 
+        held = (pd.Timestamp(moved) - pd.Timestamp(pos.entry_date)).days
         for row in (hit, next((f for f in pos.fills if _is_the_fill(f)), None)):
             if row is None:
                 continue
@@ -400,12 +426,15 @@ class Book:
             row["value"] = new_value
             row["pnl"] = new_pnl
             row["gain_pct"] = new_gain_pct
+            row["date"] = moved
+            row["held_days"] = held
 
         self.cash += (new_value - old_value)
         rec = {
             "when": str(date.today()), "what": "exit price corrected", "symbol": symbol,
             "entry_date": str(pd.Timestamp(entry_date).date()) if entry_date is not None else "",
             "sell_date": str(pd.Timestamp(sell_date).date()), "qty": int(qty),
+            "new_sell_date": moved,
             "old_price": round(float(old_price), 4), "new_price": round(new_price, 4),
             "old_pnl": round(old_pnl, 2), "new_pnl": new_pnl,
             "cash_adjusted": round(new_value - old_value, 2), "note": note,
@@ -454,6 +483,7 @@ def save_book(directory: str, book: Book) -> str:
         "income": book.income,
         "corrections": book.corrections,
         "cash_flows": book.cash_flows,
+        "charges": book.charges,
         "sizing_capital": book.sizing_capital,
         "compound_step": book.compound_step,
         "compound_buffer_pct": book.compound_buffer_pct,
@@ -482,6 +512,7 @@ def load_book(path: str) -> Book:
         income=list(blob.get("income", [])),
         corrections=list(blob.get("corrections", [])),
         cash_flows=list(blob.get("cash_flows", [])),
+        charges=list(blob.get("charges", [])),
         sizing_capital=float(blob.get("sizing_capital") or blob.get("capital") or 0),
         compound_step=float(blob.get("compound_step") or 120_000),
         compound_buffer_pct=float(blob.get("compound_buffer_pct") or 20),
