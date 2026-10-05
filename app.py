@@ -1080,8 +1080,29 @@ def split_pending(pending: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return book, stop
 
 
-def take_action_html(pending: pd.DataFrame, week) -> str:
-    """First-glance banner: N actions, X profit booking, Y SL."""
+def _cmp_watch_html(watch: pd.DataFrame | None) -> str:
+    """CMP already under the weekly 20 EMA — the Friday-close rule hasn't confirmed yet."""
+    if watch is None or watch.empty:
+        return ""
+    rows = "".join(
+        '<div class="act-row">'
+        f'<div class="saas-stock">{_avatar(r["symbol"])}'
+        f'<div class="sym">{_esc(r["symbol"])}</div></div>'
+        '<span class="tag tag-sl">CMP &lt; 20 EMA</span>'
+        f'<div class="act-why">CMP {_px(r["cmp"])} is {abs(r["gap_%"]):.1f}% below the weekly '
+        f'20 EMA {_px(r["ema"])}</div>'
+        f'<div class="act-meta">qty {int(r["qty"])}</div>'
+        "</div>"
+        for _, r in watch.iterrows())
+    return ('<div class="act-sub" style="margin-top:10px"><b>Below the 20 EMA on CMP</b> — '
+            "exit now if you choose; the rule itself confirms only on Friday's close.</div>"
+            + rows)
+
+
+def take_action_html(pending: pd.DataFrame, week, watch: pd.DataFrame | None = None) -> str:
+    """First-glance banner: N actions, X profit booking, Y SL — plus any holding
+    whose CMP is already under the weekly 20 EMA."""
+    extra = _cmp_watch_html(watch)
     book_rows, stop_rows = split_pending(pending)
     n_book = int(book_rows["symbol"].nunique()) if len(book_rows) else 0
     n_sl = int(stop_rows["symbol"].nunique()) if len(stop_rows) else 0
@@ -1093,7 +1114,7 @@ def take_action_html(pending: pd.DataFrame, week) -> str:
             '<div class="act-kicker">Take action</div>'
             '<div class="act-headline">No action this week</div>'
             f'<div class="act-sub">Hold. Nothing booked a target or hit a stop · week ending {week_s}.</div>'
-            "</div>"
+            + extra + "</div>"
         )
     bits = []
     if n_book:
@@ -1121,7 +1142,7 @@ def take_action_html(pending: pd.DataFrame, week) -> str:
         f'<div class="act-kicker">Take action</div>'
         f'<div class="act-headline">{n_act} action{"s" if n_act != 1 else ""} this week</div>'
         f'<div class="act-sub">{" · ".join(bits)} · week ending {week_s}</div>'
-        + "".join(rows) + "</div>"
+        + "".join(rows) + extra + "</div>"
     )
 
 
@@ -3855,7 +3876,12 @@ def tab_positions(s: dict) -> None:
                                   trail_levels=trail_levels,
                                   daily_close=daily_last,
                                   targets_on_daily_close=s.get("targets_on_daily_close", True))
-    st.markdown(take_action_html(pending, week), unsafe_allow_html=True)
+    # a stock already on the stop list needs no second warning; one booking a
+    # profit target still gets it
+    _stops = split_pending(pending)[1]
+    watch = jn.below_fast_ema(book, last_px, ef,
+                              skip=set(_stops["symbol"]) if len(_stops) else set())
+    st.markdown(take_action_html(pending, week, watch), unsafe_allow_html=True)
 
     wl = js.winners_losers(d["detail"])
     if not wl.empty:

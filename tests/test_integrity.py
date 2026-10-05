@@ -178,3 +178,17 @@ def test_align_panel_keeps_young_holding():
     out, dropped = data_mod.align_panel(panel, idx[0], idx[-1], min_history_days=250,
                                         tail_days=250, keep_always={"IPO"})
     assert "IPO" not in dropped and "IPO" in out["Close"].columns
+
+
+def test_below_fast_ema_watch():
+    b = jn.Book(name="t", capital=1_000_000, cash=1_000_000)
+    for sym in ("A", "B", "C", "D"):
+        b.buy(sym, IDX[0].date(), 10, 100.0, 90)
+    cmp = pd.Series({"A": 95.0, "B": 105.0, "C": 90.0, "D": 80.0})
+    ema = pd.Series({"A": 100.0, "B": 100.0, "C": 100.0, "D": 100.0})
+    w = jn.below_fast_ema(b, cmp, ema, skip={"C"})
+    assert list(w["symbol"]) == ["D", "A"]          # most extended first, C skipped
+    assert w.loc[w["symbol"] == "A", "gap_%"].iloc[0] == pytest.approx(-5.0)
+    # an EMA on a pre-split scale (> 1.8x CMP) is ignored
+    w2 = jn.below_fast_ema(b, pd.Series({"A": 50.0}), pd.Series({"A": 100.0}))
+    assert w2.empty
