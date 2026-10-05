@@ -560,6 +560,73 @@ def score_one(f: Facts, weights: dict | None = None) -> Score:
     return s
 
 
+# --------------------------------------------------------------------------- #
+# the gate — pass / fail, never a bonus
+# --------------------------------------------------------------------------- #
+GATE_INTEREST_COVER = 1.5
+GATE_DILUTION_PCT = 25.0
+
+GATE_NOT_YET = ("promoter pledge > 25% and auditor qualification are not checked yet — "
+                "they need NSE/BSE shareholding and audit filings")
+
+
+def gate(f: Facts) -> tuple[str, list[str]]:
+    """Reject the blow-up risks; reward nothing.
+
+    Fundamentals are a veto on the live buy list, not part of the rank: a bad
+    cash-flow record rejects a stock, a good one earns it nothing extra. The
+    reasoning — over a breakout's hold the business does not change, but it can
+    blow up, and a 40% gap-down is not something a 20 EMA stop can catch.
+
+    Rules (reject on any):
+
+    * cash from operations negative in 2 of the last 3 years
+    * interest coverage (EBIT / interest) below 1.5
+    * share count up 25% or more without total assets growing as fast —
+      dilution that did not buy the business anything
+
+    Returns ``(status, reasons)``. ``status`` is ``"fail"`` when a rule fires,
+    ``"pass"`` when all three could be checked and none did, and ``"unknown"``
+    when some could not be checked for lack of data and none fired. Unknown is
+    treated as a pass by the app: a missing filing is not evidence of a bad
+    business. Pledge and auditor qualification are not in Yahoo's data and are
+    not checked here (see ``GATE_NOT_YET``).
+    """
+    fails, unchecked = [], []
+
+    cfo = [v for v in f.cfo[:3] if np.isfinite(v)]
+    if len(cfo) >= 3:
+        neg = sum(1 for v in cfo if v < 0)
+        if neg >= 2:
+            fails.append(f"cash from operations negative in {neg} of the last 3 years")
+    else:
+        unchecked.append("CFO history")
+
+    r = ratios(f) if f.ok() else Ratios()
+    if np.isfinite(r.interest_cover):
+        if r.interest_cover < GATE_INTEREST_COVER:
+            fails.append(f"interest coverage {r.interest_cover:.2f}x (under {GATE_INTEREST_COVER}x)")
+    elif not (f.ebit and f.interest):
+        unchecked.append("interest coverage")
+    # (interest reported as zero with a loss leaves the cover undefined: there
+    # is no debt to service, which is not the risk this rule is about)
+
+    n = min(len(f.shares), len(f.total_assets))
+    if n >= 2 and f.shares[n - 1] > 0 and f.total_assets[n - 1] > 0:
+        dil = (f.shares[0] / f.shares[n - 1] - 1.0) * 100.0
+        grow = (f.total_assets[0] / f.total_assets[n - 1] - 1.0) * 100.0
+        if dil >= GATE_DILUTION_PCT and grow < dil:
+            fails.append(f"share count up {dil:.0f}% while assets grew {grow:.0f}%")
+    else:
+        unchecked.append("dilution")
+
+    if fails:
+        return "fail", fails
+    if unchecked:
+        return "unknown", ["not enough data for " + ", ".join(unchecked)]
+    return "pass", []
+
+
 def score_frame(
     symbols: list[str],
     cache_dir: str = DEFAULT_CACHE,
@@ -572,7 +639,7 @@ def score_frame(
     cols = ["symbol", "fundamentals_score", "available", "what is good", "watch",
             "context applied", "sales CAGR 3y %", "sales growth 1y %", "net margin %",
             "ROE %", "ROCE %", "CFO / PAT (3y)", "debt / equity", "interest cover x",
-            "dilution % pa", "note"]
+            "dilution % pa", "note", "gate", "gate why"]
     if not symbols:
         return pd.DataFrame(columns=cols).set_index("symbol")
 
@@ -581,6 +648,7 @@ def score_frame(
     rows = []
     for sym in symbols:
         sc = score_one(facts[sym], weights)
+        g_status, g_why = gate(facts[sym])
         r = sc.ratios
         rows.append({
             "symbol": sym,
@@ -599,5 +667,7 @@ def score_frame(
             "interest cover x": r.interest_cover,
             "dilution % pa": r.dilution_pa,
             "note": sc.note,
+            "gate": g_status,
+            "gate why": " · ".join(g_why),
         })
     return pd.DataFrame(rows).set_index("symbol")

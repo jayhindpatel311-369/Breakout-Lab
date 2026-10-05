@@ -41,10 +41,10 @@ from core.breakout import (
     RegimeConfig,
     daily_filter_mask,
     compute_signals,
-    diversify_picks,
     qualifying_at,
     regime_blocked,
     score_week,
+    select_by_rs,
     to_weekly,
     volume_surge_daily,
 )
@@ -67,6 +67,7 @@ from core import journal as jn
 from core import journal_stats as js
 from core import corpact as ca
 from core import gainers as gn
+from core import rs as rs_mod
 from core import params as pm
 from core import storage as sg
 import core.gvault as gv
@@ -1205,6 +1206,35 @@ def load_benchmark(candidates: tuple[str, ...], start: str, end: str, demo: bool
     return pd.Series(dtype=float), None, list(candidates)
 
 
+def load_delivery(symbols: tuple[str, ...], days: tuple, demo: bool) -> tuple[pd.Series, str]:
+    """Average delivery % over `days` per symbol, from NSE bhavcopy — and a note.
+
+    Only the week's candidates, only the last few weeks: this is a tie-breaker,
+    not a screen. If NSE refuses, the tie-breaker is simply absent and the note
+    says so.
+    """
+    if not symbols or not days:
+        return pd.Series(dtype=float), ""
+    cal = pd.DatetimeIndex(days)
+    if demo:
+        _tr, dl = nse_mod.synthetic_trades(cal, list(symbols))
+        rep = {"failed": 0, "days": len(cal)}
+    else:
+        try:
+            _tr, dl, rep = nse_mod.fetch_bhavcopy(cal, list(symbols))
+        except Exception as exc:                               # noqa: BLE001
+            return pd.Series(dtype=float), f"NSE delivery data failed ({type(exc).__name__})."
+    if dl is None or dl.empty:
+        return pd.Series(dtype=float), "NSE delivery data unavailable."
+    enough = dl.notna().sum() >= 5
+    avg = dl.mean(skipna=True).where(enough)
+    note = ""
+    if rep.get("failed"):
+        note = (f"NSE delivery data: {rep['failed']} of {rep['days']} days could not be "
+                "fetched.")
+    return avg, note
+
+
 @st.cache_data(show_spinner=False, ttl=60 * 60)
 def fetch_index_list(index_name: str):
     return data_mod.fetch_index_constituents(index_name)
@@ -1627,8 +1657,11 @@ def sidebar() -> dict:
         with card("Fundamentals"):
             s["use_fundamentals"] = st.toggle(
                 "Fundamentals analysis", value=pv("p_fund_on", True), key="p_fund_on",
-                help="On: the final rank is Technical + Fundamentals. Off: technical only, "
-                     "and the combined score is simply the technical score.")
+                help="On: this week's buys must pass the fundamentals gate (reject on CFO "
+                     "negative in 2 of 3 years, interest cover under 1.5, or 25%+ dilution "
+                     "without asset growth; missing data passes). The weight below only sets "
+                     "the combined score the backtest ranks by — the live list is ordered by "
+                     "RS Rating.")
             s["fund_weight"] = 50
             s["fund_in_backtest"] = False
             if s["use_fundamentals"]:
@@ -1667,9 +1700,8 @@ def sidebar() -> dict:
                 s["max_per_sector"] = int(st.number_input(
                     "Max stocks from one sector", 1, 10, pv("p_div_max_sector", 2),
                     key="p_div_max_sector",
-                    help="If the cap leaves the list short it is filled by score anyway and "
-                         "marked {cap} — a rule that stops you deploying capital costs more "
-                         "than the concentration would have."))
+                    help="Strict: when the cap leaves the list short, the week buys fewer "
+                         "stocks — the cap is never broken to fill it."))
                 # this box's floor moves with "New entries per week", so a value kept
                 # from an earlier setting can fall below it — clamp before the widget
                 # is built rather than letting Streamlit raise on a stale state
@@ -1683,10 +1715,10 @@ def sidebar() -> dict:
                 s["max_promote_rank"] = int(st.number_input(
                     "Never promote a stock ranked below", _lo, 200,
                     key="p_div_max_rank", **_kw,
-                    help="The floor under the sector rule. If 30 names qualify and the 28th has "
-                         "a poor chart and poor numbers, buying it to balance a sector is a "
-                         "worse decision than holding a third stock from the same sector. "
-                         "Diversification never reaches past this rank."))
+                    help="A hard floor on the RS order: nothing ranked below this is bought, "
+                         "whether a higher name was skipped for its sector or failed the "
+                         "fundamentals gate. If 30 names qualify, the 28th is not worth owning "
+                         "just to balance a sector."))
 
             # ---------------- screen ---------------- #
         with card("Screen filters"):
@@ -3313,6 +3345,18 @@ def tab_backtest(s: dict) -> None:
 # --------------------------------------------------------------------------- #
 # TAB 2 — This week's buys
 # --------------------------------------------------------------------------- #
+def _rejected_ui(rejected: pd.DataFrame) -> None:
+    """Every candidate that was not bought, with the rule that stopped it."""
+    if rejected is None or rejected.empty:
+        return
+    vetoed = rejected[rejected["why"] != "list already full"]
+    if vetoed.empty:
+        return
+    with st.expander(f"Vetoed — {len(vetoed)} candidate(s) and why"):
+        cols = [c for c in ("rank", "rs_rating", "sector", "why") if c in vetoed.columns]
+        show_df(vetoed[cols].rename(columns={"rs_rating": "RS"}))
+
+
 def tab_buys(s: dict) -> None:
     page_head("This week’s buys",
               "Friday 2:30–3:00 pm or after close · Chartink rank + actions on open positions")
@@ -3427,13 +3471,55 @@ def tab_buys(s: dict) -> None:
     scored = score_week(sig, week, cands, s["breakout"], ctx["vol_surge_weekly"],
                         fundamentals=fund)
 
+    # ---- RS Rating, against the selected universe ---- #
+    close_d = panel["Close"]
+    asof = close_d.index[close_d.index <= pd.Timestamp(week)]
+    asof = asof[-1] if len(asof) else close_d.index[-1]
+    universe = sorted(set(s["symbols"]))
+    if _imported:
+        # the imported list is priced alone; the ruler is still the universe
+        with st.spinner(f"Pricing the {len(universe)}-stock universe for RS…"):
+            upanel, _ush = load_panel(tuple(universe), str(pd.Timestamp(ctx["start"]).date()),
+                                      str(pd.Timestamp(ctx["end"]).date()), s["demo"])
+        uclose = upanel.get("Close", pd.DataFrame())
+    else:
+        uclose = close_d[[c for c in universe if c in close_d.columns]]
+    ref = rs_mod.rs_raw(uclose, asof)["rs_raw"]
+    cand_rs = rs_mod.rs_raw(close_d[[c for c in cands if c in close_d.columns]], asof)
+    if len(ref) < 30:
+        st.caption(f"⚠ Only {len(ref)} universe stocks could be rated, so RS is measured "
+                   "against the candidates themselves.")
+        ref = pd.concat([ref, cand_rs["rs_raw"]])
+    scored["rs_raw"] = cand_rs["rs_raw"].reindex(scored.index)
+    scored["rs_rating"] = rs_mod.rs_rating(cand_rs["rs_raw"], ref).reindex(scored.index)
+    scored["rs_short"] = cand_rs["rs_short"].reindex(scored.index)
+
+    # ---- delivery %, the tie-breaker ---- #
+    deliv_days = tuple(close_d.index[close_d.index <= pd.Timestamp(asof)][-20:])
+    with st.spinner("Reading NSE delivery % for the candidates…"):
+        deliv, deliv_note = load_delivery(tuple(sorted(cands)), deliv_days, s["demo"])
+    scored["delivery_pct"] = deliv.reindex(scored.index)
+    if deliv_note:
+        st.caption(deliv_note + " Ties in RS fall through to volume surge.")
+
+    # ---- the fundamentals gate ---- #
+    if not fund.empty and "gate" in fund.columns:
+        scored["gate"] = fund["gate"].reindex(scored.index).fillna("unknown")
+        scored["gate why"] = fund["gate why"].reindex(scored.index).fillna("")
+
     sectors = {}
     with st.spinner("Looking up sectors…"):
         sectors = load_sectors(tuple(sorted(cands)), s["demo"])
-    picks = diversify_picks(scored, int(s["entries_per_week"]), sectors,
-                            max_per_sector=int(s.get("max_per_sector", 2)),
-                            enabled=bool(s.get("diversify")),
-                            max_promote_rank=int(s.get("max_promote_rank") or 0) or None)
+    picks, rejected = select_by_rs(
+        scored, int(s["entries_per_week"]), sectors,
+        max_per_sector=int(s.get("max_per_sector", 2)),
+        max_rank=int(s.get("max_promote_rank") or 0) or None,
+        diversify=bool(s.get("diversify")))
+    if picks.empty:
+        st.warning("**Every candidate was vetoed this week** — nothing to buy. The rules are "
+                   "strict on purpose: a rule broken to fill the list is not a rule.")
+        _rejected_ui(rejected)
+        return
 
     # the same NSE size bands the journal reports on, so what you buy and what
     # you later measure are read in the same units
@@ -3492,12 +3578,20 @@ def tab_buys(s: dict) -> None:
         sized = size_position(ref_px, stop, s["sizing"], equity)
         n_days = int(cov.loc[sym, "days"]) if (cov is not None and sym in cov.index) else 0
         raw_pick = str(r.get("pick") or "")
-        pick_label = {"{?}": "no sector yet", "{div}": "sector fill",
-                      "{cap}": "over sector cap"}.get(raw_pick, raw_pick)
+        pick_label = {"{?}": "no sector yet"}.get(raw_pick, raw_pick)
+        gate_s = str(r.get("gate") or "")
+        gate_label = {"pass": "✅ pass", "unknown": "⚠ data nahi",
+                      "fail": "❌ fail"}.get(gate_s, "—")
         hist = f"listed {n_days // 5}w" if 0 < n_days < settled else ""
+        rs_val = r.get("rs_rating")
+        dl_val = r.get("delivery_pct")
         rows.append({
             "symbol": sym,
             "rank": int(r["rank"]) if "rank" in r else None,
+            "RS": (int(rs_val) if pd.notna(rs_val) else None),
+            "RS note": ("short history" if bool(r.get("rs_short")) else ""),
+            "delivery %": (round(float(dl_val), 1) if pd.notna(dl_val) else None),
+            "fund. gate": gate_label,
             "pick": pick_label,
             "history": hist,
             "sector": str(r.get("sector") or "Unknown"),
@@ -3579,39 +3673,42 @@ def tab_buys(s: dict) -> None:
                    f"{s['breakout'].ema_slow}-week EMA that becomes their final stop is "
                    "still a young average. Nothing is excluded; the number is "
                    "how many weeks of history they actually have.")
+    st.caption(
+        "**Order:** RS Rating, high to low (ties: delivery %, then volume surge). "
+        "**Vetoes**, never blended into the order: rank floor "
+        f"{s['max_promote_rank']}"
+        + (f", max {s['max_per_sector']} per sector" if s.get("diversify") else "")
+        + (", fundamentals gate (CFO, interest cover, dilution)" if "gate" in scored.columns
+           else " — fundamentals gate is off (switch on Fundamentals analysis)")
+        + ". Strict: a rule is never broken to fill the list.")
+    if "gate" in scored.columns:
+        st.caption("Gate ⚠ *data nahi* = not enough statements to check; it passes. "
+                   + fund_mod.GATE_NOT_YET.capitalize() + ".")
     if s.get("diversify"):
-        n_div = int((plan["pick"] == "sector fill").sum())
-        n_cap = int((plan["pick"] == "over sector cap").sum())
-        n_unk = int((plan["pick"] == "no sector yet").sum())
-        bits = [f"**sector fill** {n_div} promoted past a higher-ranked name whose sector was full"] if n_div else []
-        if n_cap:
-            bits.append(f"**over sector cap** {n_cap} taken over the {s['max_per_sector']}-per-sector cap "
-                        "to fill the list")
-        if n_unk:
-            bits.append(f"**no sector yet** {n_unk} with no sector on file, so never capped")
-        st.caption(("Sector cap {}/sector · ".format(s["max_per_sector"])
-                    + " · ".join(bits)) if bits
-                   else f"Sector cap {s['max_per_sector']}/sector — the top {len(plan)} by score "
-                        "were already spread out, nothing had to be promoted.")
-        st.caption(f"Diversification never reaches past rank {s['max_promote_rank']} — "
-                   "below that the stock is not worth owning whatever sector it is in.")
         st.caption("Sectors in this list: "
                    + ", ".join(f"{k} x{v}" for k, v in plan["sector"].value_counts().items()))
+    if len(plan) < int(s["entries_per_week"]):
+        st.info(f"**{len(plan)} of {int(s['entries_per_week'])}** this week — the rest of the "
+                "candidates were vetoed. The unspent slot(s) stay in cash.")
+    _rejected_ui(rejected)
 
     with st.expander(f"All {len(cands)} names "
                       + ("in the imported list" if _imported else "that qualified")
                       + ", ranked"):
-        cols = ["combined_score", "technical_score", "fundamentals_score", "what is good",
-                "close", "extension_%", "momentum_%", "volume_surge", "ema_fast"]
-        show_df(scored[[c for c in cols if c in scored.columns]].round(2))
-        st.caption("Combined = "
-                   f"{s['breakout'].w_technical:.0%} technical + "
-                   f"{s['breakout'].w_fundamental:.0%} fundamentals, "
-                   "renormalised for any name whose statements are missing.")
+        cols = ["rs_rating", "rs_raw", "delivery_pct", "volume_surge", "gate",
+                "technical_score", "fundamentals_score", "combined_score", "what is good",
+                "close", "extension_%", "momentum_%", "ema_fast"]
+        order = list(picks.index) + [i for i in rejected.index if i not in picks.index]
+        show_df(scored.reindex(order)[[c for c in cols if c in scored.columns]].round(2))
+        st.caption("Listed in RS order — the order the picks were made in. **rs_raw** is the "
+                   "weighted 3/6/9/12-month return (%). Technical, fundamentals and combined "
+                   "scores are shown for comparison; on the live list they no longer set "
+                   "the order (the backtest still ranks by combined score).")
 
     if s.get("use_fundamentals") and not fund.empty:
         with st.expander("Fundamentals in detail — the numbers behind the score"):
-            fcols = ["fundamentals_score", "what is good", "watch", "context applied",
+            fcols = ["gate", "gate why", "fundamentals_score", "what is good", "watch",
+                     "context applied", "interest cover x", "dilution % pa",
                      "sales CAGR 3y %", "sales growth 1y %", "net margin %",
                      "ROE %", "ROCE %", "CFO / PAT (3y)", "debt / equity", "note"]
             show_df(fund.reindex(scored.index)[[c for c in fcols if c in fund.columns]].round(2))
@@ -3649,7 +3746,8 @@ def tab_buys(s: dict) -> None:
                 d = book.add_draft(
                     sym, decided, int(r["qty"]), float(r["decision price"]), float(r["stop"]),
                     hard_stop=hard_stop_price(float(r["decision price"]), dist_pct),
-                    score=float(row["combined score"].iloc[0]) if len(row) else float("nan"),
+                    score=(float(row["RS"].iloc[0])
+                           if len(row) and pd.notna(row["RS"].iloc[0]) else float("nan")),
                     sector=str(row["sector"].iloc[0]) if len(row) else "")
                 if d is None:
                     skipped.append(sym)
