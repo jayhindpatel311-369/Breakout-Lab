@@ -442,7 +442,7 @@ Rs 2,20,000 received against Rs 2,00,000 paid. The parent alone would have read
 
 ---
 
-## The five tabs
+## The six tabs
 
 | Tab | What it's for |
 |---|---|
@@ -450,6 +450,7 @@ Rs 2,20,000 received against Rs 2,00,000 paid. The parent alone would have read
 | **This week's buys** | Drafts waiting to be confirmed, then one list for the week — what to buy, what to book, what to stop out, or nothing. Run it after Friday's close, or import a Chartink CSV and rank that list instead. The stocks that broke out, ranked, with quantity, stop and capital for each. One button records them into your journal. |
 | **Positions & exits** | A dashboard of what is working, what is at risk and what is up or down, then every holding — with days held, capital %, sector, index band and slippage. what each position owes the ladder next, and which rungs fired this week — i.e. what to sell on Monday. Record the fills you actually got. |
 | **Trading journal** | The full record and the full analysis: equity curve, ROI, CAGR, max drawdown, year and month tables, profit factor, expectancy, risk-reward, P&L by exit reason, partial-booking effectiveness, best and worst trades, index-band breakdown and slippage. Exports to CSV and Excel. |
+| **Top gainers** | Today's biggest % moves across your universe — top 5 by default (1–25), with an optional minimum price. During market hours it stamps Yahoo's live price on today; otherwise it shows the last completed session against the one before. % change comes from the split-adjusted close, the rupee prices from what actually traded, so a split day is not a 90% loser. Only stocks that are actually up make the list. |
 | **Universe & data** | How many stocks pass the screen over time, and why any given stock does or doesn't qualify right now. |
 
 ---
@@ -1017,7 +1018,7 @@ Fixing that properly needs a paid point-in-time constituent feed.
 
 ```
 breakout_lab/
-├── app.py                  the five tabs
+├── app.py                  the six tabs
 ├── core/
 │   ├── breakout.py         the fresh N-week-high scan, scoring, regime filter
 │   ├── fundamentals.py     statements -> a business score, with context rules
@@ -1029,6 +1030,7 @@ breakout_lab/
 │   ├── indices.py          which NSE size band a stock sits in
 │   ├── journal_stats.py    the live book's equity curve and analytics
 │   ├── corpact.py          splits, bonuses, dividends, rights, demergers
+│   ├── gainers.py          today's top % gainers across the universe
 │   ├── storage.py          where your data lives, and backups
 │   ├── data.py             download, cache, calendars   (shared with Momentum Lab)
 │   ├── screen.py           point-in-time universe screening        (shared)
@@ -1038,6 +1040,7 @@ breakout_lab/
 │   └── charts.py           plotly theming                          (shared)
 ├── tests/test_breakout.py  553 tests — the maths
 ├── tests/test_app_flow.py  31 tests  — the click paths, through the real app
+├── tests/test_gainers.py   the top-gainers ranking  (python -m pytest tests)
 ├── journal/                your books, as plain JSON      (movable)
 ├── params/                 your saved sidebar presets       (movable)
 └── backups/                dated snapshots                  (movable)

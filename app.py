@@ -66,6 +66,7 @@ from core import indices as ix_mod
 from core import journal as jn
 from core import journal_stats as js
 from core import corpact as ca
+from core import gainers as gn
 from core import params as pm
 from core import storage as sg
 import core.gvault as gv
@@ -4187,6 +4188,77 @@ def tab_universe(s: dict) -> None:
                 st.write(", ".join(ctx["dropped"]))
 
 
+@st.cache_data(show_spinner=False, ttl=5 * 60)
+def load_live_prices(symbols: tuple[str, ...]):
+    return data_mod.live_last_prices(list(symbols))
+
+
+def tab_gainers(s: dict) -> None:
+    page_head("Today\u2019s top gainers",
+              f"Biggest % moves across the {len(s['symbols'])} symbols in your universe")
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+    n = c1.number_input("How many", min_value=1, max_value=25, value=5, step=1,
+                        key="gainers_n")
+    min_px = c2.number_input("Min price (\u20b9)", min_value=0.0, value=0.0, step=10.0,
+                             key="gainers_min_px",
+                             help="Leave out penny stocks by their traded price.")
+    use_live = c3.toggle("Live prices (market hours)", value=not s["demo"],
+                         key="gainers_live", disabled=bool(s["demo"]),
+                         help="The price cache is end-of-day. During market hours this "
+                              "stamps Yahoo's latest print on today, so the list is "
+                              "today's move rather than yesterday's.")
+
+    if st.button(f"Show top {int(n)} gainers", type="primary", key="gainers_go"):
+        st.session_state["gainers_ran"] = True
+    if not st.session_state.get("gainers_ran"):
+        st.info("Press the button to rank today's moves.")
+        return
+
+    symbols = tuple(sorted(s["symbols"]))
+    if not symbols:
+        st.warning("The universe is empty — pick an index in the sidebar first.")
+        return
+    today = pd.Timestamp(_now_ist().date())
+    # three weeks back is plenty to find a previous close across any holiday run
+    start = today - pd.Timedelta(days=21)
+    with st.spinner(f"Loading prices for {len(symbols)} symbols…"):
+        panel, _shares = load_panel(symbols, str(start.date()), str(today.date()), s["demo"])
+    close = panel.get("Close", pd.DataFrame())
+    if close.empty:
+        st.error("No price data came back. Check the internet connection, or tick Demo mode.")
+        return
+    raw = panel.get("RawClose", close)
+
+    if use_live and not s["demo"]:
+        with st.spinner("Fetching live prices…"):
+            live = load_live_prices(tuple(close.columns))
+        if len(live):
+            close = data_mod.apply_live_mark(close, live)
+            raw = data_mod.apply_live_mark(raw, live)
+
+    top = gn.top_gainers(close, n=int(n), raw_close=raw, min_price=float(min_px))
+    as_of, prev = top.attrs.get("as_of"), top.attrs.get("prev_date")
+    if as_of is not None:
+        st.caption(f"Move on **{as_of.date()}** against the close of **{prev.date()}**"
+                   + ("" if as_of.date() == today.date() else " · today has no price bar yet"))
+    if top.empty:
+        st.warning("No stock in the universe is up on this bar.")
+        return
+
+    best = top.iloc[0]
+    tiles_row([
+        ("Top gainer", str(best["Symbol"]), f"{best['Change %']:+.2f}%", "pos"),
+        ("Avg of top list", f"{top['Change %'].mean():+.2f}%", f"{len(top)} stocks", "pos"),
+    ])
+    shown = top.copy()
+    for col in ("Prev close", "Close"):
+        shown[col] = shown[col].map(_px)
+    shown["Change"] = shown["Change"].map(lambda v: f"{v:+,.2f}")
+    shown.insert(0, "#", shown.index.astype(str))
+    st.markdown(saas_simple_html(shown, pct=("Change %",)), unsafe_allow_html=True)
+
+
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
@@ -4208,8 +4280,8 @@ def main() -> None:
         st.warning("**Demo mode is on.** Prices are synthetic. Nothing here means anything "
                    "about real stocks.")
 
-    t1, t2, t3, t4, t5 = st.tabs([
-        "Backtest", "This week", "Positions", "Journal", "Universe",
+    t1, t2, t3, t4, t5, t6 = st.tabs([
+        "Backtest", "This week", "Positions", "Journal", "Top gainers", "Universe",
     ])
     with t1:
         tab_backtest(s)
@@ -4220,6 +4292,8 @@ def main() -> None:
     with t4:
         tab_journal(s)
     with t5:
+        tab_gainers(s)
+    with t6:
         tab_universe(s)
 
 
