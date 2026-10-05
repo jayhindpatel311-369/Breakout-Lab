@@ -28,6 +28,21 @@ the actual traded price. A stock that split 1:10 shows an adjusted close of ₹4
 on a day it really traded at ₹450 — conflating those is a quiet error that only
 bites the names which had corporate actions.
 
+**Your open positions are priced from NSE itself.** Live CMP and previous close
+come from NSE's quote API, and the holdings' last 30 daily closes from NSE's
+bhavcopy (the exchange's official closing price), so the Positions tab matches
+what the broker shows. Only the open book is fetched this way — never the
+universe. NSE throttles and sometimes blocks cloud servers; when it does, those
+prices quietly come from Yahoo instead, the card says which source was used, and
+NSE is left alone for 15 minutes. No Kite Connect: it costs ₹500/month per key
+and its access token needs an interactive login every day, which an unattended
+Streamlit app cannot do.
+
+The daily cache is refreshed whenever the last settled NSE session (today's bar
+counts after 16:00 IST) is missing, and a half-built intraday bar is never
+cached as a close. Every date box defaults to the last session the NSE actually
+traded, in IST — not the server's calendar date, which on Streamlit Cloud is UTC.
+
 If you ever get a paid feed, `core/data.py` is the only file to replace.
 
 ---
@@ -442,15 +457,14 @@ Rs 2,20,000 received against Rs 2,00,000 paid. The parent alone would have read
 
 ---
 
-## The six tabs
+## The five tabs
 
 | Tab | What it's for |
 |---|---|
 | **Backtest** | Run the rules over history. If it takes no trades it shows you a funnel — screen, breakouts, candidates, regime blocks, cash — so an empty result explains itself instead of drawing a flat line. Equity curve, drawdown, how much P&L each rung of the exit ladder produced, and month-by-month / year-by-year tables including the peak capital you actually had deployed. |
-| **This week's buys** | Drafts waiting to be confirmed, then one list for the week — what to buy, what to book, what to stop out, or nothing. Run it after Friday's close, or import a Chartink CSV and rank that list instead. The stocks that broke out, ranked, with quantity, stop and capital for each. One button records them into your journal. |
-| **Positions & exits** | A dashboard of what is working, what is at risk and what is up or down, then every holding — with days held, capital %, sector, index band and slippage. what each position owes the ladder next, and which rungs fired this week — i.e. what to sell on Monday. Record the fills you actually got. |
+| **This week's buys** | Drafts waiting to be confirmed, then one list for the week — what to buy, what to book, what to stop out, or nothing. Run it after Friday's close, or import a Chartink CSV and rank that list instead. The stocks that broke out, ranked by **RS Rating** and filtered by strict vetoes (rank floor, sector cap, fundamentals gate), with quantity, stop and capital for each; every vetoed name is listed with the rule that stopped it. One button records them into your journal. |
+| **Positions & exits** | A dashboard of what is working, what is at risk and what is up or down — including **today's top 5 gainers and losers in your book** — then every holding, with days held, capital %, sector, index band and slippage; what each position owes the ladder next, and which rungs fired this week — i.e. what to sell on Monday. Holdings whose **live CMP is already under the weekly 20 EMA** are flagged next to the Friday-close exits. CMP comes from NSE's own quote (Yahoo as fallback), and the holdings' recent closes from NSE's bhavcopy. Record the fills you actually got. |
 | **Trading journal** | The full record and the full analysis: equity curve, ROI, CAGR, max drawdown, year and month tables, profit factor, expectancy, risk-reward, P&L by exit reason, partial-booking effectiveness, best and worst trades, index-band breakdown and slippage. Exports to CSV and Excel. |
-| **Top gainers** | Today's biggest % moves across your universe — top 5 by default (1–25), with an optional minimum price. During market hours it stamps Yahoo's live price on today; otherwise it shows the last completed session against the one before. % change comes from the split-adjusted close, the rupee prices from what actually traded, so a split day is not a 90% loser. Only stocks that are actually up make the list. |
 | **Universe & data** | How many stocks pass the screen over time, and why any given stock does or doesn't qualify right now. |
 
 ---
@@ -564,6 +578,21 @@ screen, so you can tell rejection-for-trend from rejection-for-missing-data.
 ---
 
 ## How the qualifiers are ranked
+
+> **The live buy list is now ordered by RS Rating, not by the combined score
+> below.** RS Rating (`core/rs.py`) is IBD-style relative strength, 1–99:
+> `0.4·r63 + 0.2·r126 + 0.2·r189 + 0.2·r252` (3/6/9/12-month returns from the
+> daily closes, as of the signal week's close), placed in the selected
+> universe's distribution — so a Chartink name from outside the universe is
+> rated on the same ruler. Ties: 20-session average NSE delivery %, then volume
+> surge. Then **strict vetoes**, applied in that order and never blended into
+> it: nothing below the rank floor, at most N per sector, and the
+> **fundamentals gate** — reject on cash from operations negative in 2 of the
+> last 3 years, interest cover under 1.5, or 25%+ share dilution without
+> matching asset growth (missing data passes, marked ⚠). A week where the
+> vetoes leave three names buys three. The scores below are still computed
+> and shown, and **the backtest still ranks by the combined score.** The next
+> phase of the gate is in [FUNDAMENTALS_GATE.md](FUNDAMENTALS_GATE.md).
 
 **Every stock that qualifies is ranked, first to last.** There is no minimum pool
 size — two candidates get a 1st and a 2nd exactly the way two hundred do. Three
@@ -1018,7 +1047,7 @@ Fixing that properly needs a paid point-in-time constituent feed.
 
 ```
 breakout_lab/
-├── app.py                  the six tabs
+├── app.py                  the five tabs
 ├── core/
 │   ├── breakout.py         the fresh N-week-high scan, scoring, regime filter
 │   ├── fundamentals.py     statements -> a business score, with context rules
@@ -1030,17 +1059,21 @@ breakout_lab/
 │   ├── indices.py          which NSE size band a stock sits in
 │   ├── journal_stats.py    the live book's equity curve and analytics
 │   ├── corpact.py          splits, bonuses, dividends, rights, demergers
-│   ├── gainers.py          today's top % gainers across the universe
+│   ├── gainers.py          today's top gainers / losers in the open book
+│   ├── rs.py               RS Rating (1-99) from daily closes
 │   ├── storage.py          where your data lives, and backups
 │   ├── data.py             download, cache, calendars   (shared with Momentum Lab)
 │   ├── screen.py           point-in-time universe screening        (shared)
-│   ├── nse.py              optional NSE bhavcopy source            (shared)
+│   ├── nse.py              NSE bhavcopy, live quotes, official closes (shared)
 │   ├── universe.py         index lists and symbol cleaning         (shared)
 │   ├── metrics.py          CAGR, Sharpe, drawdowns                 (shared)
 │   └── charts.py           plotly theming                          (shared)
 ├── tests/test_breakout.py  553 tests — the maths
 ├── tests/test_app_flow.py  31 tests  — the click paths, through the real app
-├── tests/test_gainers.py   the top-gainers ranking  (python -m pytest tests)
+├── tests/test_gainers.py   book movers                \
+├── tests/test_integrity.py dates, sessions, equity curve  } python -m pytest tests
+├── tests/test_rs.py        RS, selection, fundamentals gate
+├── tests/test_nse.py       NSE quotes, retries, close overlay /
 ├── journal/                your books, as plain JSON      (movable)
 ├── params/                 your saved sidebar presets       (movable)
 └── backups/                dated snapshots                  (movable)

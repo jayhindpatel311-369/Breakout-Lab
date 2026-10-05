@@ -1275,11 +1275,15 @@ def load_delivery(symbols: tuple[str, ...], days: tuple, demo: bool) -> tuple[pd
     if demo:
         _tr, dl = nse_mod.synthetic_trades(cal, list(symbols))
         rep = {"failed": 0, "days": len(cal)}
+    elif _nse_blocked():
+        return pd.Series(dtype=float), "NSE refused recently, so no delivery % this run."
     else:
         try:
-            _tr, dl, rep = nse_mod.fetch_bhavcopy(cal, list(symbols))
+            _tr, dl, rep = nse_mod.fetch_bhavcopy(cal, list(symbols), stop_after_failures=4)
         except Exception as exc:                               # noqa: BLE001
             return pd.Series(dtype=float), f"NSE delivery data failed ({type(exc).__name__})."
+        if rep.get("aborted"):
+            _nse_mark_blocked()
     if dl is None or dl.empty:
         return pd.Series(dtype=float), "NSE delivery data unavailable."
     enough = dl.notna().sum() >= 5
@@ -3466,7 +3470,9 @@ def tab_buys(s: dict) -> None:
     # an imported list drives the whole week, so nothing outside it is used for
     # anything — download those names and stop there
     ctx = build_context(s, for_live=True,
-                        restrict_to=_imported if _imported else None)
+                        restrict_to=_imported if _imported else None,
+                        # the week's exit list must read the same closes as Positions
+                        nse_close_for=sorted(book.open_symbols()) if book else None)
     sig, panel = ctx["signals"], ctx["panel"]
     wc = sig.weekly.get("Close", pd.DataFrame())
     if wc.empty:
