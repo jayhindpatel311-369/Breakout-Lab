@@ -347,6 +347,72 @@ class Book:
         self.corrections.append(rec)
         return rec
 
+    def edit_exit_fill(self, symbol: str, entry_date, sell_date, qty: int, old_price: float,
+                        rung: str, new_price: float, note: str = "") -> dict | None:
+        """Correct an already-recorded exit's fill price.
+
+        For when the app's price and the broker's actual print differed and the
+        exit was saved before you caught it (the "fill price" box in *Record
+        these fills* is editable before you save — this is for after). Only the
+        price changes; qty, date and rung stay put, and everything downstream of
+        price (proceeds, P&L, cash) is recomputed from it.
+
+        A SELL's ledger row and its mirror in the position's own `fills` list are
+        the same dict while the book stays in memory, but become separate copies
+        with the same values once it round-trips through JSON — so both are
+        found and corrected here rather than assuming one follows the other.
+        Logged to `corrections`, same as a removal.
+        """
+        pos = None
+        for p in list(self.positions) + list(self.closed):
+            if p.symbol != symbol:
+                continue
+            if entry_date is not None and \
+                    pd.Timestamp(p.entry_date).date() != pd.Timestamp(entry_date).date():
+                continue
+            pos = p
+            break
+        if pos is None:
+            return None
+
+        def _is_the_fill(r: dict) -> bool:
+            return (r.get("side") == "SELL" and r.get("symbol") == symbol
+                    and pd.Timestamp(r.get("date")).date() == pd.Timestamp(sell_date).date()
+                    and int(r.get("qty", 0)) == int(qty)
+                    and abs(float(r.get("price", 0.0)) - float(old_price)) < 1e-6
+                    and str(r.get("rung", "")) == str(rung))
+
+        hit = next((r for r in self.ledger if _is_the_fill(r)), None)
+        if hit is None:
+            return None
+
+        new_price = float(new_price)
+        entry_price = float(hit["entry_price"])
+        old_value, old_pnl = float(hit["value"]), float(hit["pnl"])
+        new_value = round(int(qty) * new_price, 2)
+        new_pnl = round((new_price - entry_price) * int(qty), 2)
+        new_gain_pct = round((new_price / entry_price - 1) * 100, 2) if entry_price else 0.0
+
+        for row in (hit, next((f for f in pos.fills if _is_the_fill(f)), None)):
+            if row is None:
+                continue
+            row["price"] = new_price
+            row["value"] = new_value
+            row["pnl"] = new_pnl
+            row["gain_pct"] = new_gain_pct
+
+        self.cash += (new_value - old_value)
+        rec = {
+            "when": str(date.today()), "what": "exit price corrected", "symbol": symbol,
+            "entry_date": str(pd.Timestamp(entry_date).date()) if entry_date is not None else "",
+            "sell_date": str(pd.Timestamp(sell_date).date()), "qty": int(qty),
+            "old_price": round(float(old_price), 4), "new_price": round(new_price, 4),
+            "old_pnl": round(old_pnl, 2), "new_pnl": new_pnl,
+            "cash_adjusted": round(new_value - old_value, 2), "note": note,
+        }
+        self.corrections.append(rec)
+        return rec
+
 
 RUNG_LABELS = {
     "entry": "Entry",

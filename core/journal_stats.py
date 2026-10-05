@@ -765,6 +765,45 @@ def slippage_report(book: Book) -> pd.DataFrame:
         "decision_price": "decision price", "price": "fill price"})
 
 
+def cost_summary(book: Book, brokerage_pct: float = 0.0, stt_pct: float = 0.1,
+                  other_pct: float = 0.03) -> dict:
+    """Brokerage + STT + other charges, estimated from the ledger — and what
+    Net P&L looks like once they come out.
+
+    The journal's "Net P&L" is cash + marked value minus capital put in: a pure
+    ledger number, no transaction costs in it anywhere — it is a GROSS number
+    wearing a "net" label. This estimates the real cost (percentage-of-value,
+    same shape as a contract note: brokerage, STT, and a bundled "other" for
+    exchange transaction charges + stamp duty + SEBI fee + GST on all of
+    those) and nets it against the ledger's realised + unrealised P&L.
+
+    Defaults assume Zerodha-style equity delivery: ₹0 brokerage, STT 0.1% on
+    both legs, and a small bundled rate for everything else — edit them to
+    match your own contract note; this is an estimate, not what you were
+    actually charged.
+    """
+    buys = [r for r in book.ledger if r.get("side") == "BUY"]
+    sells = [r for r in book.ledger if r.get("side") == "SELL"]
+    buy_value = float(sum(float(r.get("value", 0.0) or 0.0) for r in buys))
+    sell_value = float(sum(float(r.get("value", 0.0) or 0.0) for r in sells))
+
+    rate_buy = (brokerage_pct + other_pct) / 100.0
+    rate_sell = (brokerage_pct + other_pct + stt_pct) / 100.0
+    buy_costs = round(buy_value * rate_buy, 2)
+    sell_costs = round(sell_value * rate_sell, 2)
+    total_costs = round(buy_costs + sell_costs, 2)
+
+    realised = float(sum(float(r.get("pnl", 0.0) or 0.0) for r in sells))
+    return {
+        "buy value": round(buy_value, 2), "sell value": round(sell_value, 2),
+        "buy costs": buy_costs, "sell costs": sell_costs, "total costs": total_costs,
+        "trades": len(sells),
+        "realised (gross)": round(realised, 2),
+        "realised (after costs)": round(realised - total_costs, 2),
+        "brokerage_pct": brokerage_pct, "stt_pct": stt_pct, "other_pct": other_pct,
+    }
+
+
 def monthly_trade_table(rt: pd.DataFrame) -> pd.DataFrame:
     if rt is None or rt.empty:
         return pd.DataFrame()
@@ -854,3 +893,70 @@ def best_month(rt: pd.DataFrame) -> dict | None:
     r = mt.loc[i]
     pct = float(r["P&L %"]) if np.isfinite(r["P&L %"]) else np.nan
     return {"month": r["Month"], "pnl": float(r["P&L ₹"]), "pct": pct}
+
+
+# --------------------------------------------------------------------------- #
+# how much was left on the table
+# --------------------------------------------------------------------------- #
+_MFE_BANDS = (20, 50, 70, 100, 150, 200, 300, 400, 500)
+
+
+def mfe_report(rt: pd.DataFrame, close: pd.DataFrame | None,
+                bands: tuple[int, ...] = _MFE_BANDS) -> dict:
+    """For every closed trade: how far did it actually run, before you exited?
+
+    "Max gain reached" is the highest the DAILY close got to between entry and
+    exit (inclusive) — the Maximum Favourable Excursion. It is a ceiling, not
+    something you could have sold at exactly; what you actually booked is
+    "exit %". The gap between the two is what the exit rule gave back.
+
+    Returns `detail` (one row per trade) and `summary` — "reached at least
+    X%": a trade that peaked at 220% counts in the 100%, 150% and 200% rows
+    too, same way a high jumper who clears 2.20m cleared 2.00m on the way.
+    That is what answers "how many of my winners had a shot at riding to
+    100/200/400%, whatever I actually exited at".
+    """
+    empty = {"detail": pd.DataFrame(), "summary": pd.DataFrame()}
+    if rt is None or rt.empty:
+        return empty
+    if close is None or close.empty:
+        return empty
+
+    px = close.copy()
+    px.index = pd.DatetimeIndex([pd.Timestamp(d).normalize() for d in px.index])
+    px = px[~px.index.duplicated(keep="last")].sort_index()
+
+    rows = []
+    for _, r in rt.iterrows():
+        sym = r["symbol"]
+        if sym not in px.columns:
+            continue
+        ent = pd.Timestamp(r["entry_date"])
+        ex = pd.Timestamp(r["exit_date"])
+        window = px.loc[(px.index >= ent) & (px.index <= ex), sym].dropna()
+        if window.empty:
+            continue
+        entry_price = float(r["entry_price"])
+        if not entry_price:
+            continue
+        peak = float(window.max())
+        mfe_pct = (peak / entry_price - 1) * 100
+        exit_pct = float(r["return %"]) if np.isfinite(r["return %"]) else np.nan
+        rows.append({
+            "symbol": sym, "entry_date": r["entry_date"], "exit_date": r["exit_date"],
+            "entry_price": round(entry_price, 2), "max gain reached %": round(mfe_pct, 1),
+            "exit %": round(exit_pct, 1) if np.isfinite(exit_pct) else np.nan,
+            "left on the table (pts)": round(mfe_pct - exit_pct, 1) if np.isfinite(exit_pct) else np.nan,
+        })
+    detail = pd.DataFrame(rows)
+    if detail.empty:
+        return empty
+    detail = detail.sort_values("max gain reached %", ascending=False).reset_index(drop=True)
+
+    n = len(detail)
+    summary = pd.DataFrame([{
+        "reached at least": f"{b}%",
+        "stocks": int((detail["max gain reached %"] >= b).sum()),
+        "% of closed trades": round(float((detail["max gain reached %"] >= b).mean() * 100), 1),
+    } for b in bands if n])
+    return {"detail": detail, "summary": summary}
