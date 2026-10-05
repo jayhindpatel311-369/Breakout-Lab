@@ -128,49 +128,6 @@ def _week_is_final(week) -> bool:
     return data_mod.session_settled(pd.Timestamp(week), _now_ist().replace(tzinfo=None))
 
 
-# Brokerage/charges assumptions for the live journal's Net P&L — a small
-# app-wide preference (not book data), same file the calendar's chosen year
-# already lives in. Defaults are Zerodha-style equity delivery: ₹0 brokerage,
-# STT 0.1% both legs, a small bundled rate for exchange charges/stamp
-# duty/SEBI fee/GST on all of those.
-_COST_DEFAULTS = {"cost_brokerage_pct": 0.0, "cost_stt_pct": 0.1, "cost_other_pct": 0.03}
-
-
-def _load_cost_assumptions() -> dict:
-    path = os.path.join(APP_DIR, "ui_prefs.json")
-    blob = {}
-    try:
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                blob = json.load(f) or {}
-    except Exception:
-        blob = {}
-    return {
-        "brokerage_pct": float(blob.get("cost_brokerage_pct", _COST_DEFAULTS["cost_brokerage_pct"])),
-        "stt_pct": float(blob.get("cost_stt_pct", _COST_DEFAULTS["cost_stt_pct"])),
-        "other_pct": float(blob.get("cost_other_pct", _COST_DEFAULTS["cost_other_pct"])),
-    }
-
-
-def _save_cost_assumptions(brokerage_pct: float, stt_pct: float, other_pct: float) -> None:
-    path = os.path.join(APP_DIR, "ui_prefs.json")
-    blob = {}
-    try:
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                blob = json.load(f) or {}
-    except Exception:
-        blob = {}
-    blob["cost_brokerage_pct"] = float(brokerage_pct)
-    blob["cost_stt_pct"] = float(stt_pct)
-    blob["cost_other_pct"] = float(other_pct)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(blob, f)
-    except Exception:
-        pass
-
-
 # Where the journal and the parameter sets live is a setting, not a constant —
 # point it at a synced folder and your data survives replacing the app. These
 # are functions rather than module-level paths precisely so that changing the
@@ -182,7 +139,7 @@ def JOURNAL_DIR() -> str:                                      # noqa: N802
 def PARAMS_DIR() -> str:                                       # noqa: N802
     return sg.params_dir(APP_DIR)
 
-st.set_page_config(page_title="Breakout Lab", page_icon="📈", layout="wide",
+st.set_page_config(page_title="Breakout Lab", page_icon=":material/monitoring:", layout="wide",
                    initial_sidebar_state="collapsed")
 
 # --- Streamlit version compat ---------------------------------------------- #
@@ -194,24 +151,23 @@ _WIDE = {"width": "stretch"} if _ST_VER >= (1, 49) else {"use_container_width": 
 
 
 def show_df(df, **kw):
-    return st.dataframe(df, **_WIDE, hide_index=True, **kw)
+    # A frame indexed by symbol (the ranker's output, fundamentals) used to lose
+    # its stock names here — the index was hidden unconditionally. Hide only a
+    # plain 0..n row counter.
+    idx = getattr(df, "index", None)
+    plain = idx is None or (idx.name is None and pd.api.types.is_integer_dtype(idx))
+    return st.dataframe(df, **_WIDE, hide_index=plain, **kw)
 
 
 def show_money_df(df, money_cols=(), pct_cols=(), height=None):
     if df is None or df.empty:
         st.caption("No rows yet.")
         return
-    view = df.copy()
-    cfg = {}
-    for c in money_cols:
-        if c in view.columns:
-            view[c] = view[c].map(lambda x: rupees(float(x)) if pd.notna(x) and np.isfinite(x) else "—")
-    for c in pct_cols:
-        if c in view.columns:
-            view[c] = view[c].map(lambda x: f"{float(x):+.2f}%" if pd.notna(x) and np.isfinite(x) else "—")
-    auto = 46 + 34 * max(len(view), 1)
-    h = min(auto, 420) if height is None else min(max(auto, 80), int(height))
-    return st.dataframe(view, **_WIDE, hide_index=True, column_config=cfg, height=h)
+    # one table style across the app: the same HTML table as the holdings
+    html = saas_simple_html(df, money=tuple(money_cols), pct=tuple(pct_cols))
+    if len(df) > 12:
+        html = html.replace('class="saas-wrap"', 'class="saas-wrap tall"', 1)
+    return st.markdown(html, unsafe_allow_html=True)
 
 
 def period_table_html(df: pd.DataFrame, kind: str) -> str:
@@ -271,224 +227,395 @@ def show_chart(fig, **kw):
 # --------------------------------------------------------------------------- #
 # styling
 # --------------------------------------------------------------------------- #
-def inject_css(dark: bool) -> None:
-    """Mix: Option-1 cards, Option-3 calendar/KPI strip, Option-2 chart density."""
+def inject_css() -> None:
+    """The light design system ("Calm Slate") — tokens first, components after.
+
+    Light only, by design. Every colour below comes from a token on :root, so a
+    colour is changed in one place. Streamlit's own controls take the accent
+    from .streamlit/config.toml.
+    """
     st.markdown(
         """
         <style>
-        html, body, [class*="css"] { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-        .stApp { background: #f3f5f8; color: #111827; }
-        .block-container { padding-top: 4.8rem !important; padding-bottom: 3.2rem; max-width: 1440px; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        :root {
+            --bg: #F5F7FA; --bg-sunken: #EEF1F5;
+            --surface: #FFFFFF; --surface-muted: var(--surface-muted);
+            --border: #E3E8EF; --border-strong: #D5DCE5; --divider: #EDF1F5;
+            --text-1: #1A2233; --text-2: #475569; --text-3: #64748B; --text-disabled: #94A3B8;
+            --accent: #2B59C3; --accent-hover: #234AA3; --accent-soft: #EEF3FC; --accent-border: #C9D7F4;
+            --pos: #0F7B55; --pos-soft: #EAF6F0; --pos-border: #BFE3D1;
+            --neg: #B93A32; --neg-soft: #FCEEEE; --neg-border: #F2C9C6;
+            --warn: #9A6200; --warn-soft: #FDF5E6; --warn-border: #F2DDB0;
+            --shadow-xs: 0 1px 2px rgba(16,24,40,.04);
+            --shadow-md: 0 8px 24px rgba(16,24,40,.08);
+            --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 16px;
+            --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        }
+        html, body, .stApp, [class*="css"], button, input, textarea, select {
+            font-family: var(--font);
+            font-feature-settings: "tnum" 1, "cv11" 1;
+        }
+        .stApp { background: var(--bg); color: var(--text-1); }
+        .block-container { padding-top: 2.6rem !important; padding-bottom: 3.2rem; max-width: 1440px; }
         header[data-testid="stHeader"] { background: transparent !important; }
 
         section[data-testid="stSidebar"] {
-            background: #ffffff !important;
-            border-right: 1px solid #e8eaee;
+            background: var(--surface) !important;
+            border-right: 1px solid var(--border);
         }
-        section[data-testid="stSidebar"] * { color: #111827 !important; }
+        section[data-testid="stSidebar"] * { color: var(--text-1) !important; }
         section[data-testid="stSidebar"] .stMarkdown p,
         section[data-testid="stSidebar"] label,
-        section[data-testid="stSidebar"] span { color: #4b5563 !important; }
+        section[data-testid="stSidebar"] span { color: var(--text-2) !important; }
         section[data-testid="stSidebar"] h3,
-        section[data-testid="stSidebar"] h4 { color: #111827 !important; letter-spacing: -.02em; }
+        section[data-testid="stSidebar"] h4 { color: var(--text-1) !important; letter-spacing: -.02em; }
         section[data-testid="stSidebar"] h4 {
             font-size: 12px !important; text-transform: uppercase; letter-spacing: .08em !important;
-            color: #9ca3af !important; margin-top: 18px !important;
+            color: var(--text-3) !important; margin-top: 18px !important;
         }
 
         .sb-brand { display:flex; gap:10px; align-items:center; padding: 4px 2px 16px;
-                    border-bottom: 1px solid #f3f4f6; margin-bottom: 10px; }
-        .sb-mark { width:36px; height:36px; border-radius:10px; background:#2563eb; color:#fff;
-                   font-weight:800; font-size:13px; display:flex; align-items:center; justify-content:center; }
-        .sb-name { font-weight:800; font-size:15px; letter-spacing:-.03em; color:#111827; }
-        .sb-sub { font-size:11px; color:#9ca3af; margin-top:1px; }
+                    border-bottom: 1px solid var(--divider); margin-bottom: 10px; }
+        .sb-mark { width:36px; height:36px; border-radius:10px; background:var(--accent); color:#fff;
+                   font-weight:700; font-size:13px; display:flex; align-items:center; justify-content:center; }
+        .sb-name { font-weight:700; font-size:15px; letter-spacing:-.03em; color:var(--text-1); }
+        .sb-sub { font-size:11px; color:var(--text-3); margin-top:1px; }
 
         .stSelectbox [data-baseweb="select"] > div,
         .stMultiSelect [data-baseweb="select"] > div,
         .stNumberInput input, .stTextInput input, .stDateInput input, textarea {
-            background: #ffffff !important; color: #111827 !important;
-            border: 1px solid #e5e7eb !important; border-radius: 10px !important;
+            background: var(--surface) !important; color: var(--text-1) !important;
+            border: 1px solid var(--border) !important; border-radius: 10px !important;
         }
-        div[data-baseweb="select"] { background: #ffffff !important; }
-        div[data-baseweb="popover"] { background: #ffffff !important; color: #111827 !important; }
+        div[data-baseweb="select"] { background: var(--surface) !important; }
+        div[data-baseweb="popover"] { background: var(--surface) !important; color: var(--text-1) !important; }
 
         .stButton > button {
-            background: #ffffff !important; color: #111827 !important;
-            border: 1px solid #e5e7eb !important; border-radius: 10px !important;
+            background: var(--surface) !important; color: var(--text-1) !important;
+            border: 1px solid var(--border) !important; border-radius: 10px !important;
             font-weight: 650 !important; box-shadow: 0 1px 1px rgba(17,24,39,.04);
         }
         .stButton > button[kind="primary"],
         .stButton > button[data-testid="baseButton-primary"] {
-            background: #2563eb !important; color: #ffffff !important;
-            border: 1px solid #2563eb !important;
+            background: var(--accent) !important; color: #ffffff !important;
+            border: 1px solid var(--accent) !important;
         }
         .stDownloadButton > button {
-            background: #eff6ff !important; color: #1d4ed8 !important;
-            border: 1px solid #bfdbfe !important; border-radius: 10px !important; font-weight: 650 !important;
+            background: var(--accent-soft) !important; color: var(--accent-hover) !important;
+            border: 1px solid var(--accent-border) !important; border-radius: 10px !important; font-weight: 650 !important;
         }
 
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 6px; border-bottom: 1px solid #e8eaee; background: transparent;
+        /* main navigation: text tabs, accent underline (Streamlit draws it) */
+        [data-testid="stTabs"] [role="tablist"] {
+            gap: 26px; border-bottom: 1px solid var(--border); background: transparent;
         }
-        .stTabs [data-baseweb="tab"] {
-            color: #6b7280 !important; font-weight: 650; padding: 10px 16px;
-            border-radius: 10px 10px 0 0;
+        [data-testid="stTab"] {
+            color: var(--text-2) !important; padding: 10px 2px !important;
+            background: transparent !important;
         }
-        .stTabs [aria-selected="true"] {
-            color: #2563eb !important; background: #eff6ff !important;
+        [data-testid="stTab"] p { font-size: 15px !important; font-weight: 600 !important; }
+        [data-testid="stTab"]:hover { color: var(--text-1) !important; }
+        [data-testid="stTab"][aria-selected="true"] { color: var(--accent) !important; }
+        [data-testid="stTabs"] > div > [role="tablist"] > [data-testid="stTab"][aria-selected="true"] {
+            background: var(--accent-soft) !important; border-radius: 8px 8px 0 0;
+            padding-left: 14px !important; padding-right: 14px !important;
+        }
+        /* tabs inside a tab: a segmented control, so the hierarchy reads at a glance */
+        [data-testid="stTabs"] [data-testid="stTabs"] [role="tablist"] {
+            display: inline-flex !important; width: fit-content !important; gap: 4px; padding: 4px;
+            background: var(--bg-sunken); border: none; border-radius: 10px;
+        }
+        [data-testid="stTabs"] [data-testid="stTabs"] [data-testid="stTab"] {
+            padding: 6px 14px !important; border-radius: var(--r-md);
+        }
+        [data-testid="stTabs"] [data-testid="stTabs"] [data-testid="stTab"] p {
+            font-size: 13px !important;
+        }
+        [data-testid="stTabs"] [data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] {
+            background: var(--surface) !important; box-shadow: var(--shadow-xs);
+        }
+        [data-testid="stTabs"] [data-testid="stTabs"] [data-testid="stTab"] > div[data-rac] {
+            display: none;                      /* no underline inside the pill */
         }
 
-        h1, h2, h3, h4 { color: #111827 !important; letter-spacing: -0.03em; }
-        .stCaption, .stCaption p { color: #6b7280 !important; }
-        .stRadio label, .stCheckbox label, .stToggle label { color: #111827 !important; }
-
-        [data-testid="stExpander"] {
-            background: #fff; border: 1px solid #e8eaee; border-radius: 14px;
-            margin-bottom: 8px;
+        /* buttons */
+        .stButton > button, .stDownloadButton > button, [data-testid="stPopover"] > div > button,
+        .stFormSubmitButton > button {
+            min-height: 36px; border-radius: var(--r-md) !important; font-weight: 600 !important;
+            background: var(--surface) !important; color: var(--text-1) !important;
+            border: 1px solid var(--border-strong) !important; box-shadow: var(--shadow-xs) !important;
+            transition: background .12s ease, border-color .12s ease, transform .05s ease;
         }
+        .stButton > button:hover, .stDownloadButton > button:hover,
+        [data-testid="stPopover"] > div > button:hover {
+            background: var(--surface-muted) !important; border-color: var(--text-disabled) !important;
+        }
+        .stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"],
+        .stButton > button[data-testid="stBaseButton-primary"] {
+            background: var(--accent) !important; color: #fff !important;
+            border-color: var(--accent) !important;
+        }
+        .stButton > button[kind="primary"]:hover,
+        .stButton > button[data-testid="stBaseButton-primary"]:hover {
+            background: var(--accent-hover) !important; border-color: var(--accent-hover) !important;
+        }
+        .stButton > button:active, .stDownloadButton > button:active { transform: translateY(1px); }
+        .stButton > button:focus-visible, .stDownloadButton > button:focus-visible,
+        [data-testid="stPopover"] > div > button:focus-visible {
+            outline: none !important; box-shadow: 0 0 0 3px rgba(43,89,195,.18) !important;
+        }
+        .stButton > button:disabled, .stDownloadButton > button:disabled {
+            background: var(--surface-muted) !important; color: var(--text-disabled) !important;
+            border-color: var(--border) !important; box-shadow: none !important;
+        }
+        /* destructive actions read as such */
+        .st-key-rm_go button, .st-key-draft_drop_go button {
+            color: var(--neg) !important; border-color: var(--neg-border) !important;
+        }
+        .st-key-rm_go button:hover, .st-key-draft_drop_go button:hover {
+            background: var(--neg-soft) !important;
+        }
+
+        /* inputs */
+        .stSelectbox [data-baseweb="select"] > div, .stMultiSelect [data-baseweb="select"] > div,
+        .stNumberInput input, .stTextInput input, .stDateInput input, textarea {
+            border-color: var(--border-strong) !important; border-radius: var(--r-md) !important;
+            min-height: 38px;
+        }
+        .stSelectbox [data-baseweb="select"] > div:focus-within,
+        .stNumberInput div:focus-within > input, .stTextInput div:focus-within > input,
+        .stDateInput div:focus-within input, textarea:focus {
+            border-color: var(--accent) !important; box-shadow: 0 0 0 3px rgba(43,89,195,.14) !important;
+        }
+        input::placeholder, textarea::placeholder { color: var(--text-disabled) !important; }
+        [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+        [data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+        [data-testid="stSelectbox"] .react-aria-ComboBox > [role="group"],
+        [data-testid="stMultiSelect"] .react-aria-ComboBox > [role="group"] {
+            background: var(--surface) !important; border: 1px solid var(--border-strong) !important;
+            border-radius: var(--r-md) !important;
+        }
+        .stNumberInput button { color: var(--text-3) !important; background: transparent !important; }
+        label, .stWidgetLabel p { color: var(--text-2) !important; font-weight: 500 !important; }
+        div[data-baseweb="popover"] > div, ul[role="listbox"] {
+            border-radius: 10px !important; box-shadow: var(--shadow-md) !important;
+            border: 1px solid var(--border) !important;
+        }
+
+        /* alerts: a white card with a status stripe, not a coloured block */
+        [data-testid="stAlertContainer"] {
+            background: var(--surface) !important; color: var(--text-1) !important;
+            border: 1px solid var(--border) !important; border-left: 3px solid var(--accent) !important;
+            border-radius: var(--r-lg) !important; box-shadow: var(--shadow-xs);
+        }
+        [data-testid="stAlertContainer"] p, [data-testid="stAlertContainer"] li { color: var(--text-1) !important; }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) [data-testid="stAlertContainer"] {
+            border-left-color: var(--warn) !important; background: #FFFCF5 !important;
+        }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentError"]) [data-testid="stAlertContainer"] {
+            border-left-color: var(--neg) !important; background: #FFFBFB !important;
+        }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) [data-testid="stAlertContainer"] {
+            border-left-color: var(--pos) !important; background: #FAFDFB !important;
+        }
+
+        h1, h2, h3, h4, h5 { color: var(--text-1) !important; letter-spacing: -0.02em; font-weight: 650 !important; }
+        .stMarkdown h5 { display: flex; align-items: center; gap: 9px; }
+        .stMarkdown h5::before { content: ""; width: 4px; height: 18px; border-radius: 2px;
+                                 background: linear-gradient(180deg, var(--accent), #6FA0F5); }
+        .stCaption, .stCaption p { color: var(--text-3) !important; }
+        .stRadio label, .stCheckbox label, .stToggle label { color: var(--text-1) !important; }
+
+        [data-testid="stExpander"] details {
+            background: var(--surface); border: 1px solid var(--border) !important;
+            border-radius: var(--r-lg) !important; margin-bottom: 8px;
+        }
+        [data-testid="stExpander"] summary p { font-weight: 500; color: var(--text-1); }
         div[data-testid="stAlert"] { border-radius: 12px; }
 
-        .app-top { display:flex; justify-content:space-between; align-items:flex-end;
-                   margin: 0 0 6px; }
-        .app-name { font-size: 26px; font-weight: 800; letter-spacing: -.04em; color:#111827; }
-        .app-sub { font-size: 13px; color:#6b7280; margin-top: 2px; }
+        .app-top { display:flex; justify-content:space-between; align-items:center;
+                   margin: 0 0 4px; gap: 12px; }
+        .app-brand { display:flex; align-items:center; gap:10px; flex-wrap: wrap; }
+        .app-mark { width:32px; height:32px; border-radius:9px; display:inline-flex; align-items:center;
+                    justify-content:center; color:#fff; font-weight:700; font-size:12.5px;
+                    background: linear-gradient(135deg, #2B59C3, #5B8DEF);
+                    box-shadow: 0 2px 6px rgba(43,89,195,.30); }
+        .demo-badge { display:inline-block; padding:3px 9px; border-radius:999px; font-size:12px;
+                      font-weight:600; background: var(--warn-soft); color: var(--warn);
+                      border: 1px solid var(--warn-border); }
+        .app-name { font-size: 20px; font-weight: 700; letter-spacing: -.02em; color:var(--text-1); }
+        .app-sub { font-size: 13px; color:var(--text-3); margin-top: 2px; }
         .page-head { margin: 4px 0 14px; }
-        .page-title { font-size: 22px; font-weight: 800; letter-spacing: -.03em; color:#111827; }
-        .page-sub { font-size: 13px; color:#6b7280; margin-top: 3px; }
-        .sec-h { font-size: 14px; font-weight: 700; color:#111827; margin: 18px 0 8px; }
-        .card-h { font-size: 15px; font-weight: 800; letter-spacing: -.02em; color:#111827;
-                  margin: 2px 0 10px; }
-        .card-sub { font-size: 12px; font-weight: 500; color:#9ca3af; margin: -6px 0 10px; }
+        .page-title { font-size: 22px; font-weight: 650; letter-spacing: -.02em; color:var(--text-1); }
+        .page-sub { font-size: 13.5px; color:var(--text-3); margin-top: 4px; }
+        .sec-h { font-size: 14px; font-weight: 700; color:var(--text-1); margin: 18px 0 8px; }
+        .card-h { font-size: 15px; font-weight: 600; letter-spacing: -.01em; color:var(--text-1);
+                  margin: 4px 0 10px; }
+        .card-sub { font-size: 13px; font-weight: 400; color:var(--text-3); margin: -6px 0 12px; }
 
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: #ffffff !important;
-            border: 1px solid #e8eaee !important;
-            border-radius: 16px !important;
-            padding: 10px 14px 14px !important;
-            box-shadow: 0 1px 2px rgba(17,24,39,.04);
-            margin-bottom: 14px;
+        [class*="st-key-card_"], div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: var(--surface) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-lg) !important;
+            padding: 12px 18px 16px !important;
+            box-shadow: var(--shadow-xs);
+            margin-bottom: 16px;
         }
         [data-testid="stFileUploader"] {
-            background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 8px;
+            background: var(--surface-muted); border: 1px dashed var(--border-strong); border-radius: 12px; padding: 8px;
         }
         [data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] {
-            background: #2563eb !important; border-color: #2563eb !important;
+            background: var(--accent) !important; border-color: var(--accent) !important;
         }
         [data-testid="stDataEditor"] {
-            border: 1px solid #e8eaee; border-radius: 14px; overflow: hidden; background:#fff;
+            border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--surface);
         }
-        .sb-sec { font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
-                  color: #6b7280; background: #f8fafc; border: 1px solid #eef0f3;
+        .sb-sec { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+                  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border);
                   border-radius: 10px; padding: 8px 12px; margin: 14px 0 8px; }
 
         .tile {
             background:
-              radial-gradient(130px 90px at 100% 0%, rgba(191,219,254,.55), transparent 62%),
-              radial-gradient(100px 80px at 0% 100%, rgba(167,243,208,.22), transparent 58%),
-              #ffffff;
-            border: 1px solid #e8eaee;
-            border-radius: 16px;
+              radial-gradient(140px 96px at 100% 0%, rgba(147,183,250,.42), transparent 64%),
+              radial-gradient(110px 84px at 0% 100%, rgba(134,239,172,.20), transparent 60%),
+              var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
             padding: 16px 18px 14px;
             height: 100%;
-            box-shadow: 0 1px 2px rgba(17,24,39,.04);
+            box-shadow: 0 1px 3px rgba(16,24,40,.05);
         }
         .tile.tile-good {
-            background: radial-gradient(130px 90px at 100% 0%, rgba(167,243,208,.55), transparent 62%), #fff;
+            background: radial-gradient(150px 100px at 100% 0%, rgba(110,231,183,.50), transparent 64%),
+                        radial-gradient(110px 80px at 0% 100%, rgba(167,243,208,.22), transparent 60%),
+                        var(--surface);
+            border-color: #CFEBDD;
         }
         .tile.tile-bad {
-            background: radial-gradient(130px 90px at 100% 0%, rgba(254,202,202,.5), transparent 62%), #fff;
+            background: radial-gradient(150px 100px at 100% 0%, rgba(252,165,165,.48), transparent 64%),
+                        radial-gradient(110px 80px at 0% 100%, rgba(254,202,202,.20), transparent 60%),
+                        var(--surface);
+            border-color: #F3D3D0;
         }
-        .tile-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-                      color: #9ca3af; margin-bottom: 8px; font-weight: 650; }
-        .tile.tile-good .tile-label { color: #059669; }
-        .tile.tile-bad .tile-label { color: #dc2626; }
-        .tile-value { font-size: 26px; font-weight: 800; color: #1f2937; line-height: 1.15;
-                      letter-spacing: -.03em; }
-        .tile.tile-good .tile-value { color: #059669; }
-        .tile.tile-bad .tile-value { color: #dc2626; }
-        .tile-sub { font-size: 12px; color: #9ca3af; margin-top: 6px; }
-        .pos { color: #059669 !important; }
-        .neg { color: #dc2626 !important; }
+        .tile-label { font-size: 12px; letter-spacing: .05em; text-transform: uppercase;
+                      color: var(--text-3); margin-bottom: 8px; font-weight: 600;
+                      display: flex; align-items: center; gap: 9px; }
+        .tile.tile-good .tile-label { color: var(--pos); }
+        .tile.tile-bad .tile-label { color: var(--neg); }
+        .tile-value { font-size: 26px; font-weight: 700; color: var(--text-1); line-height: 1.2;
+                      letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+        .tile-value.pos { color: var(--pos); }
+        .tile-value.neg { color: var(--neg); }
+        .tile-sub { font-size: 12.5px; color: var(--text-3); margin-top: 6px; line-height: 1.4; }
+        .pos { color: var(--pos) !important; }
+        .neg { color: var(--neg) !important; }
         .note {
-            background: #eff6ff; border-left: 3px solid #2563eb;
-            padding: 10px 14px; border-radius: 8px; font-size: 13px; color: #1e3a8a;
+            background: var(--accent-soft); border-left: 3px solid var(--accent);
+            padding: 10px 14px; border-radius: 8px; font-size: 13px; color: var(--accent-hover);
         }
         .book-tools { background: transparent; border: none; padding: 0; margin: 0; }
 
         div[data-testid="stDataFrame"] {
-            border: 1px solid #e8eaee; border-radius: 14px; overflow: hidden;
-            background: #ffffff; box-shadow: 0 1px 2px rgba(17,24,39,.03);
+            border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+            background: var(--surface); box-shadow: var(--shadow-xs);
         }
-        div[data-testid="stDataFrame"] [data-testid="stDataFrameResizable"] { background:#fff; }
+        div[data-testid="stDataFrame"] [data-testid="stDataFrameResizable"] { background: var(--surface); }
+        [class*="st-key-card_"] div[data-testid="stDataFrame"],
+        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stDataFrame"] {
+            border: none; box-shadow: none; border-radius: var(--r-md);
+        }
 
-        .cal-wrap { background:#fff; border:1px solid #e8eaee; border-radius:18px;
+        .cal-wrap { background: var(--surface); border:1px solid var(--border); border-radius:var(--r-xl);
                     padding:18px 20px 14px; margin: 8px 0 18px;
-                    box-shadow: 0 1px 2px rgba(17,24,39,.04); }
-        .cal-kpis { display:flex; gap:0; border-bottom:1px solid #f3f4f6; margin:0 -20px 14px;
+                    box-shadow: var(--shadow-xs); }
+        .cal-kpis { display:flex; gap:0; border-bottom:1px solid var(--divider); margin:0 -20px 14px;
                     padding:0 8px 14px; overflow-x:auto; }
-        .cal-kpi { flex:1; min-width:118px; padding:4px 14px; border-right:1px solid #f3f4f6; }
+        .cal-kpi { flex:1; min-width:118px; padding:4px 14px; border-right:1px solid var(--divider); }
+        .stat-strip { background: radial-gradient(260px 120px at 100% 0%, rgba(147,183,250,.30), transparent 66%),
+                                  radial-gradient(220px 100px at 0% 100%, rgba(134,239,172,.14), transparent 62%),
+                                  var(--surface);
+                      border: 1px solid var(--border);
+                      border-radius: var(--r-lg); box-shadow: var(--shadow-xs);
+                      padding: 14px 6px 4px; margin: 0 0 16px; }
+        .stat-strip .cal-kpis { margin: 0; padding: 0 0 10px; border-bottom: none; flex-wrap: wrap; row-gap: 12px; }
         .cal-kpi:last-child { border-right:none; }
-        .cal-kpi .k { font-size:10px; letter-spacing:.08em; text-transform:uppercase;
-                      color:#9ca3af; font-weight:650; margin-bottom:6px; }
-        .cal-kpi .v { font-size:20px; font-weight:800; color:#111827; line-height:1.15; letter-spacing:-.03em; }
-        .cal-kpi .s { font-size:11px; color:#9ca3af; margin-top:3px; }
-        .cal-kpi .v.pos { color:#059669; }
-        .cal-kpi .v.neg { color:#dc2626; }
-        .cal-title { font-size:11px; font-weight:800; letter-spacing:.1em;
-                     text-transform:uppercase; color:#6b7280; margin: 4px 0 10px; }
+        .cal-kpi .k { font-size:11.5px; letter-spacing:.04em; text-transform:uppercase;
+                      color:var(--text-3); font-weight:600; margin-bottom:6px; }
+        .cal-kpi .v { font-size:20px; font-weight:650; color:var(--text-1); line-height:1.2;
+                      letter-spacing:-.02em; font-variant-numeric: tabular-nums; }
+        .cal-kpi .s { font-size:12px; color:var(--text-3); margin-top:3px; }
+        .cal-kpi .v.pos { color:var(--pos); }
+        .cal-kpi .v.neg { color:var(--neg); }
+        .cal-title { font-size:11px; font-weight:700; letter-spacing:.1em;
+                     text-transform:uppercase; color:var(--text-3); margin: 4px 0 10px; }
         .cal-leg { display:flex; gap:14px; flex-wrap:wrap; align-items:center;
-                   font-size:12px; color:#6b7280; margin-bottom:12px; }
+                   font-size:12px; color:var(--text-3); margin-bottom:12px; }
         .cal-leg .cal-day { margin-right:4px; }
         .cal-grid { display:flex; gap:14px; overflow-x:auto; padding-bottom:6px; }
         .cal-month { min-width: 108px; }
-        .cal-mh { text-align:center; font-size:11px; font-weight:800; color:#374151;
+        .cal-mh { text-align:center; font-size:11px; font-weight:700; color:var(--text-2);
                   letter-spacing:.08em; text-transform:uppercase; margin-bottom:8px; }
         .cal-row { display:flex; align-items:center; gap:3px; margin:2px 0; }
-        .cal-wd { width:28px; font-size:10px; color:#9ca3af; }
+        .cal-wd { width:28px; font-size:10px; color:var(--text-3); }
         .cal-day { display:inline-flex; align-items:center; justify-content:center;
                    width:22px; height:20px; border-radius:999px; font-size:11px;
-                   color:#9ca3af; background:transparent; }
+                   color:var(--text-3); background:transparent; }
         .cal-empty { display:inline-block; width:22px; height:20px; }
-        .cal-lg { background:#047857; color:#fff; font-weight:700; }
-        .cal-sg { background:#6ee7b7; color:#065f46; font-weight:600; }
-        .cal-be { background:#fbbf24; color:#78350f; }
-        .cal-sl { background:#fecaca; color:#7f1d1d; }
-        .cal-ll { background:#b91c1c; color:#fff; font-weight:700; }
-        .cal-en { background:#bfdbfe; color:#1e3a8a; font-weight:600; }
-        .cal-note { font-size:11px; color:#9ca3af; margin-top:10px; }
+        .cal-lg { background:#0F7B55; color:#fff; font-weight:600; }
+        .cal-sg { background:#BFE3D1; color:#0B5E41; font-weight:600; }
+        .cal-be { background:#F2DDB0; color:#7A4D00; }
+        .cal-sl { background:#F2C9C6; color:#8A2A24; }
+        .cal-ll { background:#B93A32; color:#fff; font-weight:600; }
+        .cal-en { background:#C9D7F4; color:#234AA3; font-weight:600; }
+        .cal-note { font-size:11px; color:var(--text-3); margin-top:10px; }
         .ptable-wrap { overflow-x: auto; overflow-y: auto; max-height: 440px; width: 100%;
                        -webkit-overflow-scrolling: touch; }
         .ptable { width: 100%; border-collapse: collapse; table-layout: auto; }
-        .ptable th { text-align: left; font-size: 11px; letter-spacing: .06em;
-                     text-transform: uppercase; color: #9ca3af; font-weight: 650;
-                     padding: 8px 10px; border-bottom: 1px solid #eef0f3; }
-        .ptable td { padding: 9px 10px; border-bottom: 1px solid #f3f4f6; color: #111827;
+        .ptable th { text-align: left; font-size: 12px; letter-spacing: .03em;
+                     text-transform: uppercase; color: var(--text-3); font-weight: 600;
+                     padding: 9px 10px; border-bottom: 1px solid var(--border);
+                     background: #F1F5FD; color: #4A5E86; }
+        .ptable tbody tr:hover td { background: var(--surface-muted); }
+        .ptable td { padding: 9px 10px; border-bottom: 1px solid var(--divider); color: var(--text-1);
                      font-size: 13px; }
         .ptable td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
         .ptable tr:last-child td { border-bottom: none; }
-        .ptable-empty { color: #9ca3af; font-size: 13px; padding: 8px 0; }
+        .ptable-empty { color: var(--text-3); font-size: 13px; padding: 8px 0; }
 
         .saas-wrap { width:100%; overflow-x:auto; }
         .saas-table { width:100%; border-collapse:collapse; }
         .saas-table th {
-            text-align:left; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
-            color:#9ca3af; font-weight:650; padding:10px 12px; border-bottom:1px solid #eef0f3;
-            white-space:nowrap;
+            text-align:left; font-size:12px; letter-spacing:.03em; text-transform:uppercase;
+            color:var(--text-3); font-weight:600; padding:10px 12px; border-bottom:1px solid var(--border);
+            white-space:nowrap; background: #F1F5FD; color: #4A5E86;
+        }
+        .saas-table th:first-child { border-top-left-radius: var(--r-md); }
+        .saas-table th:last-child { border-top-right-radius: var(--r-md); }
+        .saas-table tbody tr:hover td { background: var(--surface-muted); }
+        .saas-wrap.tall { max-height: 460px; overflow-y: auto; }
+        /* Streamlit's markdown styles draw a full grid on every <table>; ours
+           use horizontal rules only */
+        .saas-table, .ptable, .hold-compact { border: none !important; }
+        .saas-table th, .saas-table td, .ptable th, .ptable td, .hold-compact th, .hold-compact td {
+            border-left: none !important; border-right: none !important; border-top: none !important;
         }
         .saas-table th.num { text-align:right; }
         .saas-table td {
-            padding:14px 12px; border-bottom:1px solid #f3f4f6; color:#111827;
+            padding:12px 12px; border-bottom:1px solid var(--divider); color:var(--text-1);
             font-size:14px; vertical-align:middle;
         }
         .saas-table tr:last-child td { border-bottom:none; }
         .saas-table td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
         .saas-stock { display:flex; gap:10px; align-items:center; }
-        .saas-av { width:36px; height:36px; min-width:36px; border-radius:50%;
+        .saas-av { width:34px; height:34px; min-width:34px; border-radius:50%;
                    display:inline-flex; align-items:center; justify-content:center;
-                   font-weight:800; color:#fff; font-size:13px; letter-spacing:-.02em; }
+                   font-weight:700; color:#fff; background:var(--accent);
+                   font-size:13px; letter-spacing:-.01em;
+                   box-shadow: 0 1px 2px rgba(16,24,40,.12); }
         .saas-sym { font-weight:700; letter-spacing:-.02em; line-height:1.2; }
-        .saas-sub { font-size:12px; color:#9ca3af; margin-top:2px; }
-        .saas-next { font-size:12px; color:#4b5563; max-width:160px; line-height:1.35; }
+        .saas-sub { font-size:12px; color:var(--text-3); margin-top:2px; }
+        .saas-next { font-size:12px; color:var(--text-2); max-width:160px; line-height:1.35; }
         .m-lab { display: none; }
         .m-val { display: inline; }
         .hold-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
@@ -501,16 +628,16 @@ def inject_css(dark: bool) -> None:
         .hold-compact { width: 100%; border-collapse: collapse; font-size: 13px; }
         .hold-compact th {
             text-align: left; font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
-            color: #9ca3af; font-weight: 700; padding: 8px 6px; border-bottom: 1px solid #eef0f3;
+            color: var(--text-3); font-weight: 700; padding: 8px 6px; border-bottom: 1px solid var(--divider);
             white-space: nowrap;
         }
         .hold-compact th.num, .hold-compact td.num { text-align: right; }
         .hold-compact td {
-            padding: 10px 6px; border-bottom: 1px solid #f3f4f6; vertical-align: middle;
+            padding: 10px 6px; border-bottom: 1px solid var(--divider); vertical-align: middle;
         }
-        .hold-compact td.next { font-size: 11px; color: #4b5563; white-space: normal; max-width: 120px; }
+        .hold-compact td.next { font-size: 11px; color: var(--text-2); white-space: normal; max-width: 120px; }
         .hold-compact .saas-av { width: 24px; height: 24px; min-width: 24px; font-size: 11px; }
-        .hold-compact tfoot td { font-size: 12px; color: #4b5563; border-bottom: none; padding-top: 10px; }
+        .hold-compact tfoot td { font-size: 12px; color: var(--text-2); border-bottom: none; padding-top: 10px; }
         @media (max-width: 768px) {
             #MainMenu, .stDeployButton, [data-testid="stAppDeployButton"] { display: none !important; }
             [data-testid="stMain"], section.main,
@@ -536,62 +663,67 @@ def inject_css(dark: bool) -> None:
                 z-index: 2147483646 !important;
                 width: 44px !important;
                 height: 44px !important;
-                background: #fff !important;
-                border: 1px solid #e5e7eb !important;
+                background: var(--surface) !important;
+                border: 1px solid var(--border) !important;
                 border-radius: 10px !important;
                 box-shadow: 0 1px 3px rgba(17,24,39,.12) !important;
             }
         }
         .hold-card {
-            background: #fff; border: 1px solid #e8eaee; border-radius: 16px;
-            padding: 14px 14px 8px; box-shadow: 0 1px 2px rgba(17,24,39,.04);
+            background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+            padding: 14px 14px 8px; box-shadow: var(--shadow-xs);
         }
-        .hold-head { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #f3f4f6; }
+        .hold-head { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--divider); }
         .hold-kvs { display: flex; flex-direction: column; }
         .kv { display: flex; justify-content: space-between; align-items: flex-start;
-              gap: 10px; padding: 7px 0; border-bottom: 1px solid #f3f4f6; }
+              gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--divider); }
         .kv:last-child { border-bottom: none; }
         .kv span { font-size: 11px; font-weight: 700; letter-spacing: .06em;
-                   text-transform: uppercase; color: #9ca3af; flex: 0 0 42%; padding-top: 2px; }
-        .kv b { font-weight: 650; text-align: right; flex: 1; font-size: 14px; color: #111827; }
-        .kv.pos b { color: #047857; }
-        .kv.neg b { color: #b91c1c; }
-        .hold-foot { grid-column: 1 / -1; font-size: 13px; color: #4b5563;
+                   text-transform: uppercase; color: var(--text-3); flex: 0 0 42%; padding-top: 2px; }
+        .kv b { font-weight: 650; text-align: right; flex: 1; font-size: 14px; color: var(--text-1); }
+        .kv.pos b { color: var(--pos); }
+        .kv.neg b { color: var(--neg); }
+        .hold-foot { grid-column: 1 / -1; font-size: 13px; color: var(--text-2);
                      padding: 8px 4px 0; }
-        .badge { display:inline-block; padding:3px 9px; border-radius:999px;
-                 font-size:11px; font-weight:700; letter-spacing:.04em; }
-        .badge-buy { background:#ecfdf5; color:#047857; }
-        .badge-sell { background:#fef2f2; color:#b91c1c; }
+        .badge { display:inline-block; padding:2px 8px; border-radius:999px;
+                 font-size:12px; font-weight:600; letter-spacing:.01em; line-height:1.5;
+                 background: var(--bg-sunken); color: var(--text-2); }
+        .badge-accent { background: var(--accent-soft); color: var(--accent); }
+        .badge-pos { background: var(--pos-soft); color: var(--pos); }
+        .badge-warn { background: var(--warn-soft); color: var(--warn); }
+        .badge-neg { background: var(--neg-soft); color: var(--neg); }
+        .badge-buy { background:var(--pos-soft); color:var(--pos); }
+        .badge-sell { background:var(--neg-soft); color:var(--neg); }
         .act-banner {
-            border-radius: 18px; padding: 18px 20px 14px; margin: 4px 0 16px;
-            border: 1px solid #e8eaee; background: #fff;
-            box-shadow: 0 1px 2px rgba(17,24,39,.04);
+            border-radius: var(--r-xl); padding: 18px 20px 14px 22px; margin: 4px 0 16px;
+            border: 1px solid var(--border); background: var(--surface);
+            box-shadow: 0 1px 3px rgba(16,24,40,.05); border-left: 4px solid var(--accent);
         }
         .act-banner.hot {
-            background: radial-gradient(420px 160px at 100% 0%, rgba(254,202,202,.45), transparent 70%), #fff;
-            border-color: #fecaca;
+            background: radial-gradient(460px 170px at 100% 0%, rgba(254,202,202,.50), transparent 70%), var(--surface);
+            border-color: #F3D3D0; border-left-color: var(--neg);
         }
         .act-banner.ok {
-            background: radial-gradient(420px 160px at 100% 0%, rgba(167,243,208,.4), transparent 70%), #fff;
-            border-color: #a7f3d0;
+            background: radial-gradient(460px 170px at 100% 0%, rgba(167,243,208,.45), transparent 70%), var(--surface);
+            border-color: #CFEBDD; border-left-color: var(--pos);
         }
         .act-kicker { font-size:11px; letter-spacing:.1em; text-transform:uppercase;
-                      font-weight:800; color:#9ca3af; margin-bottom:4px; }
-        .act-banner.hot .act-kicker { color:#b91c1c; }
-        .act-banner.ok .act-kicker { color:#047857; }
-        .act-headline { font-size:26px; font-weight:800; letter-spacing:-.03em;
-                        color:#111827; line-height:1.2; }
-        .act-sub { font-size:14px; color:#4b5563; margin-top:4px; margin-bottom:12px; }
+                      font-weight:700; color:var(--text-3); margin-bottom:4px; }
+        .act-banner.hot .act-kicker { color:var(--neg); }
+        .act-banner.ok .act-kicker { color:var(--pos); }
+        .act-headline { font-size:22px; font-weight:650; letter-spacing:-.03em;
+                        color:var(--text-1); line-height:1.2; }
+        .act-sub { font-size:14px; color:var(--text-2); margin-top:4px; margin-bottom:12px; }
         .act-row { display:flex; align-items:center; gap:12px; padding:10px 0;
-                   border-top:1px solid #f3f4f6; }
-        .act-row .sym { font-weight:800; min-width:110px; }
-        .act-why { flex:1; color:#374151; font-size:14px; }
-        .act-meta { font-variant-numeric:tabular-nums; font-size:13px; color:#6b7280;
+                   border-top:1px solid var(--divider); }
+        .act-row .sym { font-weight:700; min-width:110px; }
+        .act-why { flex:1; color:var(--text-2); font-size:14px; }
+        .act-meta { font-variant-numeric:tabular-nums; font-size:13px; color:var(--text-3);
                     white-space:nowrap; text-align:right; }
-        .tag { display:inline-block; padding:3px 9px; border-radius:999px;
-               font-size:11px; font-weight:800; letter-spacing:.04em; }
-        .tag-book { background:#ecfdf5; color:#047857; }
-        .tag-sl { background:#fef2f2; color:#b91c1c; }
+        .tag { display:inline-block; padding:2px 8px; border-radius:999px;
+               font-size:12px; font-weight:600; letter-spacing:.02em; }
+        .tag-book { background:var(--pos-soft); color:var(--pos); }
+        .tag-sl { background:var(--neg-soft); color:var(--neg); }
 
         .kpi-grid {
             display: grid;
@@ -634,7 +766,7 @@ def inject_css(dark: bool) -> None:
             }
             .ptable th:first-child, .ptable td:first-child,
             .saas-table th:first-child, .saas-table td:first-child {
-                position: sticky; left: 0; background: #fff; z-index: 1;
+                position: sticky; left: 0; background: var(--surface); z-index: 1;
             }
             [data-testid="stAppViewContainer"] { display: block !important; }
             section.main, [data-testid="stMain"],
@@ -732,7 +864,7 @@ def inject_css(dark: bool) -> None:
                 margin-left: 0 !important;
                 width: 100% !important;
             }
-            div[data-testid="stVerticalBlockBorderWrapper"] {
+            [class*="st-key-card_"], div[data-testid="stVerticalBlockBorderWrapper"] {
                 padding: 8px 10px 12px !important;
             }
             [data-testid="stFileUploader"] { padding: 12px; }
@@ -748,12 +880,12 @@ def inject_css(dark: bool) -> None:
                 display: block; width: 100%;
             }
             .saas-table tr, .ptable tr {
-                background: #fff;
-                border: 1px solid #e8eaee;
+                background: var(--surface);
+                border: 1px solid var(--border);
                 border-radius: 14px;
                 margin: 0 0 10px;
                 padding: 8px 10px 6px;
-                box-shadow: 0 1px 2px rgba(17,24,39,.04);
+                box-shadow: var(--shadow-xs);
             }
             .saas-table td, .ptable td {
                 display: flex;
@@ -762,7 +894,7 @@ def inject_css(dark: bool) -> None:
                 gap: 12px;
                 text-align: right !important;
                 padding: 7px 4px !important;
-                border-bottom: 1px solid #f3f4f6 !important;
+                border-bottom: 1px solid var(--divider) !important;
                 font-size: 14px;
                 white-space: normal !important;
             }
@@ -774,7 +906,7 @@ def inject_css(dark: bool) -> None:
                 font-weight: 700;
                 letter-spacing: .06em;
                 text-transform: uppercase;
-                color: #9ca3af;
+                color: var(--text-3);
                 text-align: left;
                 flex: 0 0 42%;
                 padding-top: 2px;
@@ -809,11 +941,64 @@ def inject_css(dark: bool) -> None:
     )
 
 
+_ICON_PATHS = {
+    "wallet": '<path d="M3 7h15a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z"/><path d="M3 7l12-4v4"/><circle cx="16.5" cy="13.5" r="1.2"/>',
+    "trend": '<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+    "shield": '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+    "pie": '<path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
+    "updown": '<path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/>',
+    "check": '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
+    "star": '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>',
+    "clock": '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    "chart": '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    "percent": '<path d="M19 5L5 19"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/>',
+    "layers": '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+}
+# which metric gets which icon (keys are tile labels, slugged as in tile())
+_TILE_ICONS = {
+    "portfolio-value": "wallet", "today-p-l": "trend", "unrealised-p-l": "trend",
+    "open-risk": "shield", "gross-p-l": "trend", "net-p-l--after-charges": "wallet",
+    "realised-p-l": "check", "overall-roi": "percent", "win-rate": "check",
+    "profit-factor": "chart", "max-drawdown": "shield", "cagr": "percent",
+    "expectancy": "chart", "avg-win---avg-loss": "updown", "trades-closed": "check",
+    "calmar": "chart", "best-month": "star", "max-winning-streak": "trend",
+    "max-losing-streak": "updown", "win-streak-now": "star", "final-value": "wallet",
+    "universe": "layers", "lookback": "clock", "new-entries---week": "star",
+    "trail---final-ema": "trend", "capital": "wallet", "total-return": "percent",
+    "max-dd": "shield", "trades": "check",
+}
+
+
+def _tile_icon_css() -> str:
+    """Coloured icon chips on the metric tiles — blue, or green/red when the
+    tile carries a gain or a loss. Built once; pure CSS, no extra HTML."""
+    from urllib.parse import quote
+
+    def uri(path: str, colour: str) -> str:
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
+               f'stroke="{colour}" stroke-width="2" stroke-linecap="round" '
+               f'stroke-linejoin="round">{path}</svg>')
+        return 'url("data:image/svg+xml;utf8,' + quote(svg) + '")'
+
+    tones = {"": ("#E6EDFB", "#2B59C3"), ".tile-good": ("#D9F2E6", "#0F7B55"),
+             ".tile-bad": ("#FBE1DF", "#B93A32")}
+    rules = ['.tile[data-k] .tile-label::before { content:""; display:none; width:28px; height:28px; '
+             'min-width:28px; border-radius:8px; background-repeat:no-repeat; '
+             'background-position:center; background-size:15px 15px; }']
+    for key, icon in _TILE_ICONS.items():
+        rules.append(f'.tile[data-k="{key}"] .tile-label::before {{ display:inline-block; }}')
+        for cls, (bg, fg) in tones.items():
+            rules.append(f'.tile{cls}[data-k="{key}"] .tile-label::before '
+                         f'{{ background-color:{bg}; background-image:{uri(_ICON_PATHS[icon], fg)}; }}')
+    return "\n".join(rules)
+
+
 def tile(label: str, value: str, sub: str = "", tone: str = "") -> str:
     kind = " tile-good" if tone == "pos" else (" tile-bad" if tone == "neg" else "")
     valcls = f" {tone}" if tone else ""
     sub_html = f'<div class="tile-sub">{sub}</div>' if sub else ""
-    return (f'<div class="tile{kind}"><div class="tile-label">{label}</div>'
+    key = "".join(ch_ if ch_.isalnum() else "-" for ch_ in str(label).lower()).strip("-")
+    return (f'<div class="tile{kind}" data-k="{key}"><div class="tile-label">{label}</div>'
             f'<div class="tile-value{valcls}">{value}</div>{sub_html}</div>')
 
 
@@ -825,12 +1010,31 @@ def page_head(title: str, sub: str = "") -> None:
 
 @contextmanager
 def card(title: str = "", sub: str = ""):
-    """White rounded panel. Widgets inside inherit the mix design system."""
-    with st.container(border=True):
+    """White rounded panel. Widgets inside inherit the design system.
+
+    Each card gets a run-scoped key so the CSS can find it: Streamlit 1.5x+
+    gives a bordered container no stable test id of its own, but it does turn a
+    key into an `st-key-<key>` class. The counter restarts every run (main()),
+    so the same card gets the same key on every rerun.
+    """
+    st.session_state["_card_seq"] = st.session_state.get("_card_seq", 0) + 1
+    with st.container(border=True, key=f"card_{st.session_state['_card_seq']}"):
         if title:
             extra = f'<div class="card-sub">{sub}</div>' if sub else ""
             st.markdown(f'<div class="card-h">{title}</div>{extra}', unsafe_allow_html=True)
         yield
+
+
+def stat_strip(items) -> None:
+    """Secondary numbers in one card, divided by hairlines — the calendar's KPI
+    strip, reused. Values are coloured only when they mean profit or loss."""
+    bits = []
+    for lab, val, sub, tone in items:
+        tone = tone if tone in ("pos", "neg") else ""
+        bits.append(f'<div class="cal-kpi"><div class="k">{lab}</div>'
+                    f'<div class="v {tone}">{val}</div><div class="s">{sub}</div></div>')
+    st.markdown('<div class="stat-strip"><div class="cal-kpis">' + "".join(bits) + "</div></div>",
+                unsafe_allow_html=True)
 
 
 def tiles_row(items) -> None:
@@ -862,8 +1066,8 @@ def _td(label: str, inner: str, cls: str = "") -> str:
             f'<span class="m-val">{inner}</span></td>')
 
 
-_AVATAR = ["#2563eb", "#7c3aed", "#0891b2", "#059669", "#d97706",
-           "#dc2626", "#db2777", "#4f46e5", "#0f766e", "#b45309"]
+_AVATAR = ["#2B59C3", "#7C4DDB", "#0E8BA8", "#0F7B55", "#C77A12",
+           "#C2453B", "#C2407F", "#4F55D9", "#127A72", "#A85A14"]
 
 
 def _avatar(sym: str) -> str:
@@ -1030,7 +1234,9 @@ def saas_simple_html(df: pd.DataFrame, money=(), pct=()) -> str:
     if df is None or df.empty:
         return '<div class="ptable-empty">No rows yet.</div>'
     cols = list(df.columns)
-    th = "".join(f'<th{" class=num" if c in money or c in pct else ""}>{_esc(c)}</th>' for c in cols)
+    def _is_num(c):
+        return c in money or c in pct or pd.api.types.is_numeric_dtype(df[c])
+    th = "".join(f'<th{" class=num" if _is_num(c) else ""}>{_esc(c)}</th>' for c in cols)
     rows = []
     for _, r in df.iterrows():
         tds = []
@@ -1048,7 +1254,16 @@ def saas_simple_html(df: pd.DataFrame, money=(), pct=()) -> str:
                 except (TypeError, ValueError):
                     tds.append(_td(str(c), _esc(v), "num"))
             else:
-                tds.append(_td(str(c), _esc(v)))
+                if v is None or (isinstance(v, float) and not np.isfinite(v)):
+                    shown = "—"
+                elif isinstance(v, (float, np.floating)):
+                    shown = f"{float(v):,.0f}" if float(v).is_integer() else f"{float(v):,.2f}"
+                elif isinstance(v, (int, np.integer)) and not isinstance(v, bool):
+                    shown = f"{int(v):,}"
+                else:
+                    shown = _esc(v)
+                num = isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool)
+                tds.append(_td(str(c), shown, "num" if num else ""))
         rows.append("<tr>" + "".join(tds) + "</tr>")
     return (f'<div class="saas-wrap"><table class="saas-table"><thead><tr>{th}</tr></thead>'
             f'<tbody>{"".join(rows)}</tbody></table></div>')
@@ -1354,7 +1569,7 @@ def load_index_buckets(symbols: tuple[str, ...], demo: bool):
 # A key that is missing from a saved set falls back to the widget's own default,
 # which is what lets an old set survive a new control being added.
 PARAM_KEYS: tuple[str, ...] = (
-    "p_dark", "p_uni_src", "p_index", "p_bundled", "p_demo",
+    "p_uni_src", "p_index", "p_bundled", "p_demo",
     "p_lookback", "p_fresh", "p_ema_fast", "p_ema_slow",
     "p_w_fresh", "p_w_vol", "p_w_mom",
     "p_fund_on", "p_fund_weight", "p_fund_rank", "p_fund_bt",
@@ -1641,7 +1856,6 @@ def sidebar() -> dict:
                 pass
         params_ui()
         data_folder_ui()
-        s["dark"] = False
 
 
         # ---------------- universe ---------------- #
@@ -2638,9 +2852,9 @@ def edit_fill_ui(book: jn.Book) -> None:
     stay put; only price, and what follows from it, changes.
     """
     sells = [r for r in book.ledger if r.get("side") == "SELL"]
-    with st.expander("Correct an exit's fill price"):
-        st.caption("Not a new sale — this only corrects the price already recorded for a "
-                    "past exit, and recomputes its P&L and cash from the new number.")
+    with st.expander("Correct an exit — date and fill price"):
+        st.caption("Not a new sale — this corrects the date and price already recorded for a "
+                    "past exit, and recomputes its P&L and cash from the new numbers.")
         if not sells:
             st.caption("No recorded exits yet.")
         else:
@@ -2649,29 +2863,36 @@ def edit_fill_ui(book: jn.Book) -> None:
                       for r in sells]
             pick = st.selectbox("Which fill", labels, key="ef_pick")
             r = sells[labels.index(pick)]
-            new_px = st.number_input("Correct fill price (₹)", 0.01, 1e7,
-                                      float(r["price"]), format="%.4f", key="ef_px")
+            c1, c2 = st.columns(2)
+            new_date = c1.date_input("Correct exit date", value=pd.Timestamp(r["date"]).date(),
+                                     key=f"ef_date_{labels.index(pick)}")
+            new_px = c2.number_input("Correct fill price (₹)", 0.01, 1e7,
+                                     float(r["price"]), format="%.4f",
+                                     key=f"ef_px_{labels.index(pick)}")
             note = st.text_input("Why (kept in the log)", key="ef_note",
                                   placeholder="broker's actual print, e.g. Zerodha")
             if st.button("Save correction", key="ef_go"):
                 rec = book.edit_exit_fill(
                     r["symbol"], r.get("entry_date"), r["date"], int(r["qty"]),
-                    float(r["price"]), str(r.get("rung", "")), float(new_px), note=note)
+                    float(r["price"]), str(r.get("rung", "")), float(new_px), note=note,
+                    new_date=new_date)
                 persist_book(book)
                 if rec:
-                    st.success(f"{r['symbol']}: fill corrected to ₹{new_px:.2f} · "
+                    st.success(f"{r['symbol']}: exit corrected to {rec['new_sell_date']} at "
+                               f"₹{new_px:.2f} · "
                                f"P&L {rupees(rec['old_pnl'])} → {rupees(rec['new_pnl'])} · "
                                f"cash adjusted {rupees(rec['cash_adjusted'])}.")
                     st.rerun()
                 else:
-                    st.error("Could not find that exact fill — it may already have been "
-                             "corrected. Refresh and try again.")
+                    st.error("Could not save that — the exit date may be before the entry "
+                             "date, or the fill was already corrected. Refresh and try again.")
 
         corrected = [r for r in book.corrections if r.get("what") == "exit price corrected"]
         if corrected:
             st.markdown("###### What has been corrected")
             show_df(pd.DataFrame([{
                 "when": r.get("when"), "symbol": r.get("symbol"), "sold": r.get("sell_date"),
+                "new date": r.get("new_sell_date") or r.get("sell_date"),
                 "qty": r.get("qty"), "old price": r.get("old_price"), "new price": r.get("new_price"),
                 "old P&L": r.get("old_pnl"), "new P&L": r.get("new_pnl"), "why": r.get("note") or "—",
             } for r in reversed(corrected)]))
@@ -2865,7 +3086,7 @@ def action_panel(book: jn.Book | None, plan: pd.DataFrame, pending: pd.DataFrame
         else:
             st.caption(f"**{total} thing(s) to do** this week.")
         if n_draft:
-            st.info(f"⏳ **{n_draft} draft buy(s)** still waiting to be confirmed.")
+            st.info(f"**{n_draft} draft buy(s)** still waiting to be confirmed.")
 
         if n_buy:
             st.markdown("##### Buy")
@@ -2974,9 +3195,9 @@ def chartink_ui() -> None:
 # --------------------------------------------------------------------------- #
 # charts
 # --------------------------------------------------------------------------- #
-def equity_figure(equity: pd.Series, bench: pd.Series | None, dark: bool,
+def equity_figure(equity: pd.Series, bench: pd.Series | None,
                   pct: bool = False) -> go.Figure:
-    t = ch.theme(dark)
+    t = ch.theme()
     fig = go.Figure()
     y = equity.values.astype(float)
     start = float(y[0]) if len(y) else 0.0
@@ -2987,53 +3208,39 @@ def equity_figure(equity: pd.Series, bench: pd.Series | None, dark: bool,
         tickprefix = ""
         tickformat = "+,.2f"
         fill = "tozeroy"
-        fillcolor = "rgba(5,150,105,0.12)"
+        fillcolor = t["accent_fill"]
     else:
         title = "Portfolio (₹)"
         hover = "₹%{y:,.0f}"
         tickprefix = "₹"
         tickformat = ",.0f"
         fill = "tonexty"
-        fillcolor = "rgba(5,150,105,0.10)"
+        fillcolor = t["accent_fill"]
     fig.add_trace(go.Scatter(
         x=equity.index, y=y, name="Strategy",
-        line=dict(color="#059669", width=2.4),
-        fill="tozeroy" if pct else None,
-        fillcolor=fillcolor if pct else None,
+        line=dict(color=t["accent"], width=2),
+        fill="tozeroy",
+        fillcolor=fillcolor,
         hovertemplate="%{x|%d %b %Y}<br>" + hover + "<extra></extra>",
     ))
     ymin, ymax = float(np.nanmin(y)), float(np.nanmax(y))
     pad = max((ymax - ymin) * 0.2, (1.0 if pct else abs(ymin) * 0.002) or 1)
-    fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-        margin=dict(l=10, r=10, t=30, b=10), height=380,
-        yaxis=dict(gridcolor="#e5e7eb", title=title,
-                   tickprefix=(tickprefix),
-                   tickformat=tickformat,
-                   range=[ymin - pad, ymax + pad]),
-        xaxis=dict(gridcolor="#e5e7eb"),
-    )
+    ch.style(fig, height=340, ytitle=title)
+    fig.update_yaxes(tickprefix=tickprefix, tickformat=tickformat, range=[ymin - pad, ymax + pad])
     return fig
 
 
-def drawdown_figure(equity: pd.Series, dark: bool) -> go.Figure:
-    t = ch.theme(dark)
+def drawdown_figure(equity: pd.Series) -> go.Figure:
+    t = ch.theme()
     dd = M.drawdown_series(equity) * 100
     fig = go.Figure(go.Scatter(x=dd.index, y=dd.values, fill="tozeroy",
                                 line=dict(color=t["critical"], width=1.4),
-                                fillcolor="rgba(220,38,38,0.12)",
+                                fillcolor=t["neg_fill"],
                                 hovertemplate="%{x|%d %b %Y}<br>%{y:.2f}%<extra></extra>"))
     ymin, ymax = float(dd.min()), float(dd.max())
     pad = max(0.15, (ymax - ymin) * 0.2 if ymax != ymin else 0.4)
-    fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-        margin=dict(l=10, r=10, t=30, b=10), height=220,
-        yaxis=dict(gridcolor="#e5e7eb", title="Drawdown %",
-                   range=[ymin - pad, ymax + pad]),
-        xaxis=dict(gridcolor="#e5e7eb"),
-    )
+    ch.style(fig, height=240, ytitle="Drawdown %")
+    fig.update_yaxes(range=[ymin * 1.15 - 0.5, max(0.5, ymax)])
     return fig
 
 
@@ -3062,7 +3269,12 @@ def trading_calendar_html(book: jn.Book, year: int, kpis: list | None = None) ->
     pnl_by_day: dict[date, float] = {}
     entry_days: set[date] = set()
     if not led.empty:
-        led["date"] = pd.to_datetime(led["date"]).dt.date
+        # The grid is Mon–Fri. A fill saved with a Saturday or Sunday date (the
+        # date box left on the calendar day) had no cell and simply vanished;
+        # it belongs to the Friday session before it.
+        days = pd.to_datetime(led["date"])
+        days = days - pd.to_timedelta((days.dt.weekday - 4).clip(lower=0), unit="D")
+        led["date"] = days.dt.date
         led["pnl"] = pd.to_numeric(led.get("pnl"), errors="coerce").fillna(0.0)
         for d, g in led.groupby("date"):
             sells = g[g["side"].astype(str).str.upper() == "SELL"]
@@ -3133,52 +3345,44 @@ def trading_calendar_html(book: jn.Book, year: int, kpis: list | None = None) ->
     )
 
 
-def weekly_pnl_figure(rt: pd.DataFrame, dark: bool) -> go.Figure:
-    t = ch.theme(dark)
+def weekly_pnl_figure(rt: pd.DataFrame) -> go.Figure:
+    t = ch.theme()
     fig = go.Figure()
     if rt is None or rt.empty:
-        fig.update_layout(template="plotly_white", height=220)
-        return fig
+        return ch.style(fig, height=220)
     d = rt.copy()
     d["exit_date"] = pd.to_datetime(d["exit_date"])
     d["week"] = d["exit_date"].dt.to_period("W-FRI").astype(str)
     g = d.groupby("week", as_index=False)["P&L"].sum()
     colors = [t["good"] if v >= 0 else t["critical"] for v in g["P&L"]]
-    fig.add_trace(go.Bar(x=g["week"], y=g["P&L"], marker_color=colors, name="Weekly P&L"))
-    fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor=t["surface"], plot_bgcolor=t["surface"],
-        margin=dict(l=10, r=10, t=24, b=10), height=260,
-        yaxis=dict(gridcolor=t["grid"], title="P&L (₹)"),
-        xaxis=dict(gridcolor=t["grid"], title="Week ending Friday"),
-        showlegend=False,
-    )
+    fig.add_trace(go.Bar(x=g["week"], y=g["P&L"], marker_color=colors, name="Weekly P&L",
+                         width=[0.3] * len(g) if len(g) < 4 else None,
+                         hovertemplate="%{x}<br>₹%{y:,.0f}<extra></extra>"))
+    ch.style(fig, height=240, ytitle="P&L (₹)", xtitle="Week ending Friday")
+    fig.update_layout(showlegend=False)
     return fig
 
 
-def donut_figure(title: str, labels, values, colors, dark: bool, center: str) -> go.Figure:
-    t = ch.theme(dark)
+def donut_figure(title: str, labels, values, colors, center: str) -> go.Figure:
+    t = ch.theme()
     fig = go.Figure(go.Pie(
         labels=list(labels), values=list(values), hole=0.68,
-        marker=dict(colors=list(colors)),
+        marker=dict(colors=list(colors), line=dict(color=t["surface"], width=2)),
         textinfo="none",
         hoverinfo="label+value+percent",
     ))
+    ch.style(fig, height=220, hover="closest")
     fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor=t["surface"], plot_bgcolor=t["surface"],
-        margin=dict(l=10, r=10, t=36, b=10), height=220,
-        title=dict(text=title, font=dict(size=13, color=t["text"])),
         showlegend=True,
-        legend=dict(orientation="h", y=-0.08, x=0.15),
-        annotations=[dict(text=center, x=0.5, y=0.5, font=dict(size=16, color=t["text"]),
-                          showarrow=False)],
+        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"),
+        annotations=[dict(text=center, x=0.5, y=0.5, showarrow=False,
+                          font=dict(size=18, color=t["text"], family=ch.FONT))],
     )
     return fig
 
 
-def exit_reason_figure(rb: pd.DataFrame, dark: bool) -> go.Figure:
-    t = ch.theme(dark)
+def exit_reason_figure(rb: pd.DataFrame) -> go.Figure:
+    t = ch.theme()
     fig = go.Figure()
     if rb is None or rb.empty:
         return fig
@@ -3191,15 +3395,12 @@ def exit_reason_figure(rb: pd.DataFrame, dark: bool) -> go.Figure:
         y = rb.iloc[:, 0].astype(str)
         x = rb[col] if col in rb.columns else rb.iloc[:, -1]
     colors = [t["good"] if float(v) >= 0 else t["critical"] for v in x]
-    fig.add_trace(go.Bar(x=x, y=y, orientation="h", marker_color=colors))
-    fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor=t["surface"], plot_bgcolor=t["surface"],
-        margin=dict(l=10, r=10, t=10, b=10), height=max(180, 28 * len(y) + 60),
-        xaxis=dict(gridcolor=t["grid"], title="P&L (₹)"),
-        yaxis=dict(autorange="reversed"),
-        showlegend=False,
-    )
+    fig.add_trace(go.Bar(x=x, y=y, orientation="h", marker_color=colors,
+                         hovertemplate="%{y}<br>₹%{x:,.0f}<extra></extra>"))
+    ch.style(fig, height=max(180, 32 * len(y) + 60), xtitle="P&L (₹)", hover="closest")
+    fig.update_xaxes(showgrid=True, gridcolor=ch.theme()["grid"])
+    fig.update_yaxes(showgrid=False, autorange="reversed")
+    fig.update_layout(showlegend=False)
     return fig
 
 
@@ -3328,8 +3529,8 @@ def tab_backtest(s: dict) -> None:
     ])
 
     st.markdown("")
-    show_chart(equity_figure(eq, st.session_state.get("bt_bench"), s["dark"]))
-    show_chart(drawdown_figure(eq, s["dark"]))
+    show_chart(equity_figure(eq, st.session_state.get("bt_bench")))
+    show_chart(drawdown_figure(eq))
 
     trades = res.trades
     n_buys = int((trades["side"] == "BUY").sum()) if not trades.empty else 0
@@ -3370,7 +3571,7 @@ def tab_backtest(s: dict) -> None:
     with card("Year by year"):
         yb = yearly_breakdown(res)
         if not yb.empty:
-            show_chart(ch.yearly_bars(yb.rename(columns={"Return (%)": "Return (%)"}), s["dark"]))
+            show_chart(ch.yearly_bars(yb.rename(columns={"Return (%)": "Return (%)"})))
             show_df(yb.style.format({
                 "Return (%)": "{:,.2f}", "Start Capital": "₹{:,.0f}", "End Capital": "₹{:,.0f}",
                 "Net Profit": "₹{:,.0f}", "Max drawdown %": "{:,.2f}",
@@ -3383,7 +3584,7 @@ def tab_backtest(s: dict) -> None:
     with card("Month by month"):
         mt = M.monthly_table(eq)
         if not mt.empty:
-            show_chart(ch.monthly_heatmap(mt, s["dark"]))
+            show_chart(ch.monthly_heatmap(mt))
         mb = monthly_breakdown(res)
         if not mb.empty:
             st.caption("**Max capital used** is the peak cost of open positions during that month — "
@@ -3436,7 +3637,7 @@ def _rejected_ui(rejected: pd.DataFrame) -> None:
         return
     with st.expander(f"Vetoed — {len(vetoed)} candidate(s) and why"):
         cols = [c for c in ("rank", "rs_rating", "sector", "why") if c in vetoed.columns]
-        show_df(vetoed[cols].rename(columns={"rs_rating": "RS"}))
+        show_df(vetoed[cols].rename(columns={"rs_rating": "RS"}).rename_axis("Stock"))
 
 
 def tab_buys(s: dict) -> None:
@@ -3571,7 +3772,7 @@ def tab_buys(s: dict) -> None:
     ref = rs_mod.rs_raw(uclose, asof)["rs_raw"]
     cand_rs = rs_mod.rs_raw(close_d[[c for c in cands if c in close_d.columns]], asof)
     if len(ref) < 30:
-        st.caption(f"⚠ Only {len(ref)} universe stocks could be rated, so RS is measured "
+        st.caption(f":material/warning: Only {len(ref)} universe stocks could be rated, so RS is measured "
                    "against the candidates themselves.")
         ref = pd.concat([ref, cand_rs["rs_raw"]])
     scored["rs_raw"] = cand_rs["rs_raw"].reindex(scored.index)
@@ -3664,8 +3865,8 @@ def tab_buys(s: dict) -> None:
         raw_pick = str(r.get("pick") or "")
         pick_label = {"{?}": "no sector yet"}.get(raw_pick, raw_pick)
         gate_s = str(r.get("gate") or "")
-        gate_label = {"pass": "✅ pass", "unknown": "⚠ data nahi",
-                      "fail": "❌ fail"}.get(gate_s, "—")
+        gate_label = {"pass": "Pass", "unknown": "No data (passes)",
+                      "fail": "Fail"}.get(gate_s, "—")
         hist = f"listed {n_days // 5}w" if 0 < n_days < settled else ""
         rs_val = r.get("rs_rating")
         dl_val = r.get("delivery_pct")
@@ -3766,7 +3967,7 @@ def tab_buys(s: dict) -> None:
            else " — fundamentals gate is off (switch on Fundamentals analysis)")
         + ". Strict: a rule is never broken to fill the list.")
     if "gate" in scored.columns:
-        st.caption("Gate ⚠ *data nahi* = not enough statements to check; it passes. "
+        st.caption("Gate *No data* = not enough statements to check; it passes. "
                    + fund_mod.GATE_NOT_YET.capitalize() + ".")
     if s.get("diversify"):
         st.caption("Sectors in this list: "
@@ -3783,7 +3984,8 @@ def tab_buys(s: dict) -> None:
                 "technical_score", "fundamentals_score", "combined_score", "what is good",
                 "close", "extension_%", "momentum_%", "ema_fast"]
         order = list(picks.index) + [i for i in rejected.index if i not in picks.index]
-        show_df(scored.reindex(order)[[c for c in cols if c in scored.columns]].round(2))
+        show_df(scored.reindex(order)[[c for c in cols if c in scored.columns]].round(2)
+                .rename_axis("Stock"))
         st.caption("Listed in RS order — the order the picks were made in. **rs_raw** is the "
                    "weighted 3/6/9/12-month return (%). Technical, fundamentals and combined "
                    "scores are shown for comparison; on the live list they no longer set "
@@ -3795,7 +3997,8 @@ def tab_buys(s: dict) -> None:
                      "context applied", "interest cover x", "dilution % pa",
                      "sales CAGR 3y %", "sales growth 1y %", "net margin %",
                      "ROE %", "ROCE %", "CFO / PAT (3y)", "debt / equity", "note"]
-            show_df(fund.reindex(scored.index)[[c for c in fcols if c in fund.columns]].round(2))
+            show_df(fund.reindex(scored.index)[[c for c in fcols if c in fund.columns]].round(2)
+                    .rename_axis("Stock"))
             st.caption(
                 "Cash from operations carries the heaviest weight (35%), then sales growth "
                 "and margins (20% each), ROCE (15%) and ROE (10%). **Context applied** lists "
@@ -3911,11 +4114,11 @@ def _curve_health_note(eq: pd.Series) -> None:
     gap = float(eq.attrs.get("reconcile_gap", 0.0) or 0.0)
     unpriced = eq.attrs.get("unpriced") or []
     if abs(gap) > max(100.0, abs(float(eq.iloc[-1])) * 0.001):
-        st.caption(f"⚠ The day-by-day curve is {_signed_rupees(gap)} away from the live "
+        st.caption(f":material/warning: The day-by-day curve is {_signed_rupees(gap)} away from the live "
                    "book. Something changed the book without a dated ledger entry — "
                    "Today / 5-day P&L may be off by about that much.")
     if unpriced:
-        st.caption("⚠ No price history for " + ", ".join(unpriced)
+        st.caption(":material/warning: No price history for " + ", ".join(unpriced)
                    + " — valued at the last fill price on the days it was held.")
 
 
@@ -3930,7 +4133,7 @@ def tab_positions(s: dict) -> None:
     # without waiting for prices; the last refresh's marks are reused if there
     # were any, which is what makes the drift column work
     if book.drafts:
-        st.info(f"⏳ **{len(book.drafts)} draft buy(s)** waiting — confirm them on the "
+        st.info(f"**{len(book.drafts)} draft buy(s)** waiting — confirm them on the "
                 "*This week's buys* tab.")
     if not book.positions:
         st.info("No confirmed positions yet. Queue buys on *This week's buys*, then confirm "
@@ -4017,43 +4220,40 @@ def tab_positions(s: dict) -> None:
         sub = sub_ok if w["sessions"] >= (5 if "5" in lab else 1) else sub_short.format(w["sessions"])
         return (lab, _signed_rupees(w["pnl"]),
                 f"{w['pct']:+,.2f}% · {sub}", tone_of(w["pnl"]))
-    tiles_row([
-        _wp("Today P&L", td, "vs previous close (live)", "{} session(s)"),
-        _wp("Last 5 days P&L", d5, "5 trading days · live mark", "{} trading day(s) in book"),
-    ])
-    _curve_health_note(eq_pos)
+    today_t = _wp("Today P&L", td, "vs previous close (live)", "{} session(s)")
+    five_t = _wp("Last 5 days P&L", d5, "5 trading days · live mark", "{} trading day(s) in book")
+    # the four numbers you look at first, then everything else in one quiet strip
     tiles_row([
         ("Portfolio value", rupees(d["portfolio value"]),
          f"capital {rupees(book.capital)}", ""),
-        ("Capital deployed", rupees(d["deployed"]),
-         f"{d['deployed %']:,.1f}% working · {d['cash %']:,.1f}% cash", ""),
+        today_t,
         ("Unrealised P&L", rupees(d["unrealised"]),
          f"{d['unrealised %']:+,.2f}% on {rupees(d['cost'])} of cost"
          if np.isfinite(d["unrealised %"]) else "", tone_of(d["unrealised"])),
+        ("Open Risk", rupees(risk_total),
+         (f"{risk_pct_cap:,.2f}% of capital ({rupees(cap)})"
+          if np.isfinite(risk_pct_cap) else ""),
+         "neg" if risk_total > 0 else ""),
+    ])
+    stat_strip([
+        five_t,
+        ("Capital deployed", rupees(d["deployed"]),
+         f"{d['deployed %']:,.1f}% working · {d['cash %']:,.1f}% cash", ""),
         ("Up / down", f"{d['winners']} / {d['losers']}",
          f"{d['win share %']:,.0f}% of {d['positions']} in profit"
          if np.isfinite(d["win share %"]) else "", ""),
         ("Realised so far", rupees(d["realised so far"]),
-         f"{rupees(d['booked in open trades'])} of it from trades still open",
+         f"{rupees(d['booked in open trades'])} from open trades",
          tone_of(d["realised so far"])),
-    ])
-    tiles_row([
         ("Best open", (f"{d['best']['symbol']}" if d["best"] else "—"),
-         (f"{rupees(d['best']['pnl'])} · {d['best']['pct']:+,.1f}%" if d["best"] else ""),
-         tone_of(d["best"]["pnl"] if d["best"] else 0)),
+         (f"{d['best']['pct']:+,.1f}% · {rupees(d['best']['pnl'])}" if d["best"] else ""), ""),
         ("Worst open", (f"{d['worst']['symbol']}" if d["worst"] else "—"),
-         (f"{rupees(d['worst']['pnl'])} · {d['worst']['pct']:+,.1f}%" if d["worst"] else ""),
-         tone_of(d["worst"]["pnl"] if d["worst"] else 0)),
-        ("Biggest position", d["largest"] or "—",
-         f"{d['largest %']:,.1f}% of the book" if np.isfinite(d["largest %"]) else "", ""),
-        ("Open Risk", rupees(risk_total),
-         (f"{risk_pct_cap:,.2f}% of capital ({rupees(cap)})"
-          if np.isfinite(risk_pct_cap) else ""),
-         "neg"),
+         (f"{d['worst']['pct']:+,.1f}% · {rupees(d['worst']['pnl'])}" if d["worst"] else ""), ""),
         ("Avg weeks held",
          (f"{d['avg days held']/7:,.1f}" if np.isfinite(d["avg days held"]) else "—"),
-         "open positions · weekly holds", ""),
+         "open positions", ""),
     ])
+    _curve_health_note(eq_pos)
 
     last_day = panel["Close"].index[-1]
     trail_levels = {k: (v.loc[last_day] if last_day in v.index else pd.Series(dtype=float))
@@ -4157,6 +4357,63 @@ def tab_positions(s: dict) -> None:
 # --------------------------------------------------------------------------- #
 # TAB 4 — Trading journal
 # --------------------------------------------------------------------------- #
+def charges_ui(book: jn.Book, rt: pd.DataFrame) -> None:
+    """Brokerage / STT / charges, typed in month by month from the broker.
+
+    Replaces the old rate-based estimate: a contract note's real total is the
+    only number worth netting against P&L.
+    """
+    t_add, t_net = st.tabs([f"Charges ({len(book.charges)} month(s))", "Monthly net P&L"])
+    with t_add:
+        st.caption("Enter each month's total charges from your contract notes or the "
+                   "broker's P&L statement (brokerage + STT + exchange + stamp + SEBI + GST). "
+                   "Saving a month again replaces it; 0 removes it.")
+        c1, c2, c3, c4 = st.columns([1, 1, 2, 1])
+        today = data_mod.today_ist()
+        months = [(today - pd.DateOffset(months=i)).strftime("%Y-%m") for i in range(0, 36)]
+        month = c1.selectbox("Month", months, key="chg_month")
+        have = next((c for c in book.charges if c.get("month") == month), None)
+        amount = c2.number_input("Charges (₹)", 0.0, 1e9,
+                                 float(have["amount"]) if have else 0.0, step=100.0,
+                                 key=f"chg_amt_{month}")
+        note = c3.text_input("Note", value=(have or {}).get("note", ""), key=f"chg_note_{month}",
+                             placeholder="Zerodha contract notes")
+        c4.write("")
+        if c4.button("Save", key="chg_save", type="primary"):
+            book.set_charge(month, amount, note)
+            persist_book(book)
+            st.success(f"{month}: {rupees(amount)} saved." if amount
+                       else f"{month}: removed.")
+            st.rerun()
+        if book.charges:
+            st.markdown(saas_simple_html(
+                pd.DataFrame([{"Month": c["month"], "Charges": c["amount"],
+                               "Note": c.get("note") or "—"} for c in book.charges]),
+                money=("Charges",)), unsafe_allow_html=True)
+            st.caption(f"Total charges entered: **{rupees(book.total_charges())}**")
+    with t_net:
+        realised: dict[str, float] = {}
+        if rt is not None and len(rt):
+            for _, r in rt.iterrows():
+                m = pd.Timestamp(r["exit_date"]).strftime("%Y-%m")
+                realised[m] = realised.get(m, 0.0) + float(r["P&L"])
+        chg = {c["month"]: float(c["amount"]) for c in book.charges}
+        months_all = sorted(set(realised) | set(chg))
+        if not months_all:
+            st.caption("No closed trades or charges yet.")
+        else:
+            net = pd.DataFrame([{
+                "Month": m,
+                "Realised P&L": realised.get(m, 0.0),
+                "Charges": -chg.get(m, 0.0),
+                "Net": realised.get(m, 0.0) - chg.get(m, 0.0),
+            } for m in months_all])
+            st.markdown(saas_simple_html(net, money=("Realised P&L", "Charges", "Net")),
+                        unsafe_allow_html=True)
+            st.caption("Realised P&L by the month each trade finally closed, less that "
+                       "month's charges.")
+
+
 def tab_journal(s: dict) -> None:
     page_head("Trading journal",
               "KPI strip + calendar first · daily equity · weekly P&L")
@@ -4200,14 +4457,16 @@ def tab_journal(s: dict) -> None:
     rb = js.exit_reasons(book)
     rt = js.round_trips(book)
     eq = js.equity_curve(book, close)
-    costs = js.cost_summary(book, **_load_cost_assumptions())
+    charges = book.total_charges()
+    n_months = len(book.charges)
 
     tiles_row([
         ("Gross P&L", _signed_rupees(st_["Net P&L"]),
-         "ledger only — no brokerage/STT/charges yet", tone_of(st_["Net P&L"])),
-        ("Net P&L (after costs)", _signed_rupees(st_["Net P&L"] - costs["total costs"]),
-         f"− {rupees(costs['total costs'])} est. costs on {costs['trades']} exit(s) · "
-         "see Costs & net P&L tab", tone_of(st_["Net P&L"] - costs["total costs"])),
+         "ledger only — before brokerage/STT/charges", tone_of(st_["Net P&L"])),
+        ("Net P&L (after charges)", _signed_rupees(st_["Net P&L"] - charges),
+         (f"− {rupees(charges)} charges entered for {n_months} month(s)" if n_months
+          else "no charges entered yet — add them month-wise in the Charges tab below"),
+         tone_of(st_["Net P&L"] - charges)),
         ("Realised P&L", _signed_rupees(st_["Realised P&L"]),
          "booked exits, before costs", tone_of(st_["Realised P&L"])),
         ("Unrealised P&L", _signed_rupees(st_["Unrealised P&L"]),
@@ -4231,37 +4490,7 @@ def tab_journal(s: dict) -> None:
          else "needs prices", "neg"),
     ])
 
-    with card("Costs & net P&L", "Brokerage, STT and charges, estimated from the ledger"):
-        st.caption("The ledger has no transaction costs in it, so every P&L above this line "
-                   "is gross. This estimates what a contract note would show — percentage of "
-                   "traded value, same shape brokers bill in — and nets it against realised "
-                   "P&L. It is an estimate: edit the rates to match your own contract note.")
-        tiles_row([
-            ("Buy value", rupees(costs["buy value"]), f"{costs['trades']} exit(s) in the book", ""),
-            ("Sell value", rupees(costs["sell value"]), "", ""),
-            ("Est. total costs", rupees(costs["total costs"]),
-             f"buy {rupees(costs['buy costs'])} + sell {rupees(costs['sell costs'])}", "neg"),
-            ("Realised, after costs", _signed_rupees(costs["realised (after costs)"]),
-             f"gross {_signed_rupees(costs['realised (gross)'])}",
-             tone_of(costs["realised (after costs)"])),
-        ])
-        with st.expander("Edit the assumed rates"):
-            c1, c2, c3 = st.columns(3)
-            bp = c1.number_input("Brokerage % (per side)", 0.0, 5.0,
-                                  costs["brokerage_pct"], step=0.01, format="%.3f", key="cost_bp")
-            sp = c2.number_input("STT % (both sides, delivery)", 0.0, 5.0,
-                                  costs["stt_pct"], step=0.01, format="%.3f", key="cost_sp")
-            op = c3.number_input("Other % per side (exchange + stamp + SEBI + GST, bundled)",
-                                  0.0, 5.0, costs["other_pct"], step=0.01, format="%.3f", key="cost_op")
-            st.caption("Zerodha equity delivery defaults: brokerage ₹0, STT 0.1% on both legs. "
-                       "\"Other\" bundles exchange transaction charge (~0.003%), stamp duty "
-                       "(0.015%, buy side), SEBI fee and 18% GST on all of those — roughly "
-                       "0.03%/side is close for most books; check your contract note if it "
-                       "matters to you.")
-            if st.button("Save rates", key="cost_save"):
-                _save_cost_assumptions(bp, sp, op)
-                st.success("Saved — applies everywhere Net P&L is shown.")
-                st.rerun()
+    charges_ui(book, rt)
 
     age = st_.get("Book age (years)", np.nan)
     # Brokers (Zerodha Console etc.) annualise with
@@ -4290,6 +4519,18 @@ def tab_journal(s: dict) -> None:
           if np.isfinite(st_["Avg days held"]) else ""), ""),
         ("Calmar", _safe_ratio(st_.get("Calmar", np.nan)), "CAGR / max drawdown", ""),
     ])
+    if len(rt):
+        bm = js.best_month(rt)
+        sk = js.streaks(rt)
+        tiles_row([
+            ("Best month", bm["month"] if bm else "—",
+             (rupees(bm["pnl"]) if bm else ""), "pos" if bm and bm["pnl"] > 0 else ""),
+            ("Max winning streak", str(sk["max win streak"]),
+             "closed trades in a row", "pos"),
+            ("Max losing streak", str(sk["max loss streak"]),
+             "closed trades in a row", "neg"),
+            ("Win streak now", str(sk["win streak"]), "", ""),
+        ])
 
     if close is None:
         st.caption("**Drawdown, CAGR, Calmar, the equity curve and the year / month tables "
@@ -4357,24 +4598,13 @@ def tab_journal(s: dict) -> None:
                              horizontal=True, key="eq_mode")
             g1, g2 = st.columns([1.7, 1])
             with g1:
-                show_chart(equity_figure(eq, None, s["dark"], pct=mode.startswith("%")))
+                show_chart(equity_figure(eq, None, pct=mode.startswith("%")))
             with g2:
-                show_chart(drawdown_figure(eq, s["dark"]))
+                show_chart(drawdown_figure(eq))
                 if len(rt):
-                    show_chart(weekly_pnl_figure(rt, s["dark"]))
+                    show_chart(weekly_pnl_figure(rt))
 
         if len(rt):
-            bm = js.best_month(rt)
-            sk = js.streaks(rt)
-            tiles_row([
-                ("Best month", bm["month"] if bm else "—",
-                 (rupees(bm["pnl"]) if bm else ""), "pos" if bm and bm["pnl"] > 0 else ""),
-                ("Max winning streak", str(sk["max win streak"]),
-                 "closed trades in a row", "pos"),
-                ("Max losing streak", str(sk["max loss streak"]),
-                 "closed trades in a row", "neg"),
-                ("Win streak now", str(sk["win streak"]), "", ""),
-            ])
             mt = js.monthly_trade_table(rt)
             yt = js.yearly_trade_table(rt)
             with card("Monthly performance"):
@@ -4384,15 +4614,13 @@ def tab_journal(s: dict) -> None:
                 show_money_df(yt, money_cols=("P&L ₹", "Capital"),
                               pct_cols=("Win %", "P&L %", "Avg gain", "Avg loss"))
             if not mt.empty:
-                t = ch.theme(False)
+                t = ch.theme()
                 fig = go.Figure(go.Bar(
                     x=mt["Month"], y=mt["P&L %"],
                     marker_color=[t["good"] if v >= 0 else t["critical"] for v in mt["P&L %"]],
                 ))
-                fig.update_layout(template="plotly_white", height=260,
-                                  yaxis_title="P&L %", showlegend=False,
-                                  margin=dict(l=10, r=10, t=10, b=10),
-                                  paper_bgcolor="#fff", plot_bgcolor="#fff")
+                ch.style(fig, height=240, ytitle="P&L %")
+                fig.update_layout(showlegend=False)
                 st.markdown("##### P&L vs month")
                 show_chart(fig)
 
@@ -4417,7 +4645,7 @@ def tab_journal(s: dict) -> None:
         losses = int((rt["P&L"] <= 0).sum())
         wr = st_["Win rate %"] if np.isfinite(st_["Win rate %"]) else 0
         rr = st_.get("Risk-reward", np.nan)
-        t = ch.theme(s["dark"])
+        t = ch.theme()
         v1, v2 = st.columns(2)
         with v1:
             with card("Strike rate"):
@@ -4426,7 +4654,6 @@ def tab_journal(s: dict) -> None:
                     ["Winners", "Losers"],
                     [max(wins, 0), max(losses, 0)],
                     [t["good"], t["critical"]],
-                    s["dark"],
                     f"{wr:,.0f}%" if np.isfinite(wr) else "—",
                 ))
         with v2:
@@ -4442,7 +4669,6 @@ def tab_journal(s: dict) -> None:
                     ["Avg win %", "Avg loss %"],
                     [aw or 0.01, al or 0.01],
                     [t["good"], t["series"][3]],
-                    s["dark"],
                     f"1 : {_safe_ratio(rr)}" if np.isfinite(rr) else "—",
                 ))
 
@@ -4451,7 +4677,7 @@ def tab_journal(s: dict) -> None:
         st.caption("Profit targets, the 20 EMA break, the 50 EMA break — what each rung actually "
                    "paid.")
         if not rb.empty:
-            show_chart(exit_reason_figure(rb, s["dark"]))
+            show_chart(exit_reason_figure(rb))
             show_df(rb)
 
     pb = js.partial_booking(rt)
@@ -4592,12 +4818,9 @@ def tab_journal(s: dict) -> None:
     eq = jn.equity_points(book)
     if len(eq) > 1:
         st.markdown("##### Cash after every fill")
-        t = ch.theme(s["dark"])
+        t = ch.theme()
         fig = go.Figure(go.Scatter(x=eq.index, y=eq.values, line=dict(color=t["series"][0], width=2)))
-        fig.update_layout(template="plotly_dark" if s["dark"] else "plotly_white",
-                          paper_bgcolor=t["surface"], plot_bgcolor=t["surface"], height=260,
-                          margin=dict(l=10, r=10, t=20, b=10),
-                          yaxis=dict(gridcolor=t["grid"]), xaxis=dict(gridcolor=t["grid"]))
+        ch.style(fig, height=240)
         show_chart(fig)
 
     with st.expander("Danger zone"):
@@ -4650,14 +4873,10 @@ def tab_universe(s: dict) -> None:
         st.caption(n)
 
     with card("How many stocks pass the screen over time"):
-        t = ch.theme(s["dark"])
+        t = ch.theme()
         fig = go.Figure(go.Scatter(x=res.counts.index, y=res.counts.values,
-                                    line=dict(color=t["series"][1], width=1.5)))
-        fig.update_layout(template="plotly_white",
-                          paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", height=260,
-                          margin=dict(l=10, r=10, t=20, b=10),
-                          yaxis=dict(gridcolor="#e5e7eb", title="Qualifying"),
-                          xaxis=dict(gridcolor="#e5e7eb"))
+                                    line=dict(color=t["accent"], width=1.6)))
+        ch.style(fig, height=240, ytitle="Qualifying")
         show_chart(fig)
 
     with card("Why each stock does or doesn't qualify, right now"):
@@ -4673,22 +4892,27 @@ def tab_universe(s: dict) -> None:
 # main
 # --------------------------------------------------------------------------- #
 def main() -> None:
+    st.session_state["_card_seq"] = 0
     hydrate_books_from_browser()
     s = sidebar()
-    inject_css(s["dark"])
+    inject_css()
+    st.markdown(f"<style>{_tile_icon_css()}</style>", unsafe_allow_html=True)
 
-    st.markdown(
-        '<div class="app-top"><div><div class="app-name">Breakout Lab</div>'
-        '<div class="app-sub">Weekly N-week-high breakouts on NSE · tiered booking · EMA trail · journal</div>'
-        '</div></div>',
-        unsafe_allow_html=True,
-    )
-    with st.popover("Backup / Import"):
-        book_tools_ui(current_book(), "hdr")
-
-    if s["demo"]:
-        st.warning("**Demo mode is on.** Prices are synthetic. Nothing here means anything "
-                   "about real stocks.")
+    demo = ('<span class="demo-badge" title="Prices are synthetic. Nothing here means anything '
+            'about real stocks.">Demo mode — synthetic prices</span>') if s["demo"] else ""
+    h1, h2 = st.columns([5, 1], vertical_alignment="center")
+    with h1:
+        st.markdown(
+            '<div class="app-top"><div><div class="app-brand"><span class="app-mark">BL</span>'
+            '<span class="app-name">Breakout Lab'
+            f'</span>{demo}</div>'
+            '<div class="app-sub">Weekly N-week-high breakouts on NSE · tiered booking · EMA trail · journal</div>'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+    with h2:
+        with st.popover("Backup / Import", icon=":material/backup:", **_WIDE):
+            book_tools_ui(current_book(), "hdr")
 
     t1, t2, t3, t4, t5 = st.tabs([
         "Backtest", "This week", "Positions", "Journal", "Universe",

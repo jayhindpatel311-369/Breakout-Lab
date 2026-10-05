@@ -25,43 +25,70 @@ import plotly.graph_objects as go
 # theme
 # --------------------------------------------------------------------------- #
 LIGHT = {
-    "surface": "#ffffff",
-    "plane": "#f4f6f8",
-    "text": "#111827",
-    "text2": "#4b5563",
-    "muted": "#6b7280",
-    "grid": "#e5e7eb",
-    "axis": "#d1d5db",
-    "series": ["#2563eb", "#ea580c", "#059669", "#d97706", "#db2777", "#16a34a", "#4f46e5", "#dc2626"],
-    "pos": "#059669",
-    "neg": "#dc2626",
-    "mid": "#f3f4f6",
-    "good": "#059669",
-    "critical": "#dc2626",
+    # the app's design tokens, for Plotly
+    "surface": "#FFFFFF",
+    "plane": "#F8FAFC",
+    "text": "#1A2233",
+    "text2": "#475569",
+    "muted": "#64748B",
+    "grid": "#EDF1F5",
+    "axis": "#E3E8EF",
+    "accent": "#2B59C3",
+    # categorical, colour-vision safe, muted: accent blue first
+    "series": ["#2B59C3", "#D9822B", "#0F7B55", "#7A5AC8", "#64748B", "#B08900", "#2C8C9E", "#B93A32"],
+    "pos": "#0F7B55",
+    "neg": "#B93A32",
+    "mid": "#F1F4F8",
+    "good": "#0F7B55",
+    "critical": "#B93A32",
+    "pos_fill": "rgba(15,123,85,0.10)",
+    "neg_fill": "rgba(185,58,50,0.10)",
+    "accent_fill": "rgba(43,89,195,0.08)",
 }
 
-DARK = {
-    "surface": "#1a1a19",
-    "plane": "#0d0d0d",
-    "text": "#ffffff",
-    "text2": "#c3c2b7",
-    "muted": "#898781",
-    "grid": "#2c2c2a",
-    "axis": "#383835",
-    "series": ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
-    "pos": "#3987e5",
-    "neg": "#d03b3b",
-    "mid": "#383835",
-    "good": "#0ca30c",
-    "critical": "#d03b3b",
-}
+def theme() -> dict:
+    """The one chart theme. The app is light-only by design."""
+    return LIGHT
 
 
-def theme(dark: bool = True) -> dict:
-    return DARK if dark else LIGHT
+FONT = 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif'
 
 
-FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
+def style(fig: go.Figure, height: int | None = None, ytitle: str | None = None,
+          xtitle: str | None = None, hover: str = "x unified") -> go.Figure:
+    """The house look for any figure built in the app: white plot, Inter,
+    horizontal gridlines only, quiet axis text, a white hover card, no
+    in-chart title (the card around the chart carries the title)."""
+    t = LIGHT
+    fig.update_layout(
+        template="plotly_white",
+        paper_bgcolor=t["surface"], plot_bgcolor=t["surface"],
+        font=dict(family=FONT, color=t["text2"], size=12),
+        margin=dict(l=8, r=8, t=16, b=8),
+        hovermode=hover,
+        hoverlabel=dict(bgcolor=t["surface"], bordercolor=t["axis"],
+                        font=dict(family=FONT, color=t["text"], size=12)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1,
+                    bgcolor="rgba(0,0,0,0)", font=dict(color=t["text2"], size=11)),
+        bargap=0.45,
+    )
+    try:
+        fig.update_layout(barcornerradius=4)
+    except Exception:                                          # older Plotly
+        pass
+    if height:
+        fig.update_layout(height=height)
+    fig.update_xaxes(showgrid=False, zeroline=False, linecolor=t["axis"],
+                     tickfont=dict(color=t["muted"], size=11),
+                     title_font=dict(color=t["muted"], size=11))
+    fig.update_yaxes(gridcolor=t["grid"], zeroline=False, linecolor="rgba(0,0,0,0)",
+                     tickfont=dict(color=t["muted"], size=11),
+                     title_font=dict(color=t["muted"], size=11))
+    if ytitle is not None:
+        fig.update_yaxes(title_text=ytitle)
+    if xtitle is not None:
+        fig.update_xaxes(title_text=xtitle)
+    return fig
 
 
 def _base(fig: go.Figure, t: dict, title: str, height: int = 420, ytitle: str = "") -> go.Figure:
@@ -111,10 +138,9 @@ def equity_chart(
     equity: pd.Series,
     benchmark: pd.Series | None,
     invested: pd.Series | None,
-    dark: bool = True,
     title: str = "Portfolio vs benchmark",
 ) -> go.Figure:
-    t = theme(dark)
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=equity.index, y=equity.values, name="Portfolio", mode="lines",
@@ -137,10 +163,10 @@ def equity_chart(
     return _base(fig, t, title, 440, "Capital (Rs)")
 
 
-def growth_chart(twr: pd.Series, bench_twr: pd.Series | None, dark: bool = True) -> go.Figure:
+def growth_chart(twr: pd.Series, bench_twr: pd.Series | None) -> go.Figure:
     """Growth of Rs 100 — cashflow effects removed, so this is the honest
     strategy-vs-index comparison."""
-    t = theme(dark)
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=twr.index, y=(twr / twr.iloc[0] * 100).values, name="Strategy", mode="lines",
@@ -158,8 +184,8 @@ def growth_chart(twr: pd.Series, bench_twr: pd.Series | None, dark: bool = True)
     return fig
 
 
-def underwater_chart(dd: pd.Series, bench_dd: pd.Series | None, dark: bool = True) -> go.Figure:
-    t = theme(dark)
+def underwater_chart(dd: pd.Series, bench_dd: pd.Series | None) -> go.Figure:
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=dd.index, y=(dd * 100).values, name="Strategy", mode="lines",
@@ -176,9 +202,9 @@ def underwater_chart(dd: pd.Series, bench_dd: pd.Series | None, dark: bool = Tru
     return _base(fig, t, "Underwater plot — how far below the previous peak", 340, "Drawdown (%)")
 
 
-def monthly_heatmap(table: pd.DataFrame, dark: bool = True, title: str = "Monthly returns (%)") -> go.Figure:
+def monthly_heatmap(table: pd.DataFrame, title: str = "Monthly returns (%)") -> go.Figure:
     """Diverging blue (gain) ↔ red (loss) with a neutral midpoint at zero."""
-    t = theme(dark)
+    t = theme()
     if table.empty:
         return _base(go.Figure(), t, title, 260)
     z = table.values.astype(float)
@@ -189,7 +215,7 @@ def monthly_heatmap(table: pd.DataFrame, dark: bool = True, title: str = "Monthl
         z=z,
         x=list(table.columns),
         y=[str(i) for i in table.index],
-        colorscale=[[0.0, t["neg"]], [0.5, t["mid"]], [1.0, t["pos"]]],
+        colorscale=[[0.0, t["neg"]], [0.5, t["mid"]], [1.0, t["accent"]]],
         zmid=0, zmin=-lim, zmax=lim,
         text=text, texttemplate="%{text}",
         textfont=dict(size=11, family=FONT),
@@ -203,8 +229,8 @@ def monthly_heatmap(table: pd.DataFrame, dark: bool = True, title: str = "Monthl
     return fig
 
 
-def yearly_bars(yearly: pd.DataFrame, dark: bool = True) -> go.Figure:
-    t = theme(dark)
+def yearly_bars(yearly: pd.DataFrame) -> go.Figure:
+    t = theme()
     if yearly.empty:
         return _base(go.Figure(), t, "Year-wise return", 300)
     vals = yearly["Return (%)"].astype(float)
@@ -221,7 +247,7 @@ def yearly_bars(yearly: pd.DataFrame, dark: bool = True) -> go.Figure:
     return fig
 
 
-def allocation_area(weights: pd.DataFrame, labels: dict[str, str] | None, dark: bool = True,
+def allocation_area(weights: pd.DataFrame, labels: dict[str, str] | None,
                     max_series: int = 7) -> go.Figure:
     """Stacked exposure through time.
 
@@ -230,7 +256,7 @@ def allocation_area(weights: pd.DataFrame, labels: dict[str, str] | None, dark: 
     an eighth named series would have to reuse a hue, and two identically
     coloured bands in one stack is worse than no breakdown at all. Cash sits on
     the neutral grey, which is not a categorical slot."""
-    t = theme(dark)
+    t = theme()
     if weights.empty:
         return _base(go.Figure(), t, "Allocation over time", 340)
     w = weights.copy() * 100
@@ -259,9 +285,9 @@ def allocation_area(weights: pd.DataFrame, labels: dict[str, str] | None, dark: 
     return _base(fig, t, "Allocation over time (% of capital)", 380, "Weight (%)")
 
 
-def rolling_chart(series: pd.Series, title: str, ytitle: str, dark: bool = True,
+def rolling_chart(series: pd.Series, title: str, ytitle: str,
                   ref: float | None = None) -> go.Figure:
-    t = theme(dark)
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=series.index, y=series.values, mode="lines", name=title,
@@ -275,10 +301,10 @@ def rolling_chart(series: pd.Series, title: str, ytitle: str, dark: bool = True,
     return fig
 
 
-def factor_contribution(scored: pd.DataFrame, weights: dict[str, float], dark: bool = True,
+def factor_contribution(scored: pd.DataFrame, weights: dict[str, float],
                         top_n: int = 15) -> go.Figure:
     """Which factor pushed which name up the ranking, at one point in time."""
-    t = theme(dark)
+    t = theme()
     if scored is None or scored.empty:
         return _base(go.Figure(), t, "Factor contribution", 340)
     rows = scored.head(top_n)
@@ -299,9 +325,9 @@ def factor_contribution(scored: pd.DataFrame, weights: dict[str, float], dark: b
     return fig
 
 
-def scatter_risk_return(points: pd.DataFrame, dark: bool = True) -> go.Figure:
+def scatter_risk_return(points: pd.DataFrame) -> go.Figure:
     """points: index=label, columns=['vol','cagr'] as fractions."""
-    t = theme(dark)
+    t = theme()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=points["vol"] * 100, y=points["cagr"] * 100, mode="markers+text",
@@ -316,7 +342,7 @@ def scatter_risk_return(points: pd.DataFrame, dark: bool = True) -> go.Figure:
     return fig
 
 
-def universe_size_chart(timeline: pd.DataFrame, dark: bool = True) -> go.Figure:
+def universe_size_chart(timeline: pd.DataFrame) -> go.Figure:
     """How many names passed the screen at each rebalance.
 
     A flat line means your filter is really just picking a fixed list. A line
@@ -324,7 +350,7 @@ def universe_size_chart(timeline: pd.DataFrame, dark: bool = True) -> go.Figure:
     the strategy was operating in genuinely different opportunity sets at
     different times, which is the honest picture.
     """
-    t = theme(dark)
+    t = theme()
     if timeline is None or timeline.empty:
         return _base(go.Figure(), t, "Universe size over time", 300)
     fig = go.Figure()
@@ -340,9 +366,9 @@ def universe_size_chart(timeline: pd.DataFrame, dark: bool = True) -> go.Figure:
     return fig
 
 
-def universe_churn_chart(timeline: pd.DataFrame, dark: bool = True) -> go.Figure:
+def universe_churn_chart(timeline: pd.DataFrame) -> go.Figure:
     """Entries and exits per rebalance — the churn the screen imposes."""
-    t = theme(dark)
+    t = theme()
     if timeline is None or timeline.empty:
         return _base(go.Figure(), t, "Universe churn", 300)
     fig = go.Figure()
