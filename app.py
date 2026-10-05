@@ -4363,7 +4363,14 @@ def charges_ui(book: jn.Book, rt: pd.DataFrame) -> None:
     Replaces the old rate-based estimate: a contract note's real total is the
     only number worth netting against P&L.
     """
-    t_add, t_net = st.tabs([f"Charges ({len(book.charges)} month(s))", "Monthly net P&L"])
+    label = (f"Charges — {len(book.charges)} month(s) entered, {rupees(book.total_charges())}"
+             if book.charges else "Charges — add brokerage/STT month-wise")
+    with st.expander(label, icon=":material/receipt_long:"):
+        _charges_tabs(book, rt)
+
+
+def _charges_tabs(book: jn.Book, rt: pd.DataFrame) -> None:
+    t_add, t_net = st.tabs(["Add charges", "Monthly net P&L"])
     with t_add:
         st.caption("Enter each month's total charges from your contract notes or the "
                    "broker's P&L statement (brokerage + STT + exchange + stamp + SEBI + GST). "
@@ -4465,7 +4472,7 @@ def tab_journal(s: dict) -> None:
          "ledger only — before brokerage/STT/charges", tone_of(st_["Net P&L"])),
         ("Net P&L (after charges)", _signed_rupees(st_["Net P&L"] - charges),
          (f"− {rupees(charges)} charges entered for {n_months} month(s)" if n_months
-          else "no charges entered yet — add them month-wise in the Charges tab below"),
+          else "no charges entered yet — add them in the Charges section below the tiles"),
          tone_of(st_["Net P&L"] - charges)),
         ("Realised P&L", _signed_rupees(st_["Realised P&L"]),
          "booked exits, before costs", tone_of(st_["Realised P&L"])),
@@ -4489,8 +4496,6 @@ def tab_journal(s: dict) -> None:
          "peak-to-trough of daily equity + live mark" if np.isfinite(st_["Max drawdown %"])
          else "needs prices", "neg"),
     ])
-
-    charges_ui(book, rt)
 
     age = st_.get("Book age (years)", np.nan)
     # Brokers (Zerodha Console etc.) annualise with
@@ -4531,6 +4536,8 @@ def tab_journal(s: dict) -> None:
              "closed trades in a row", "neg"),
             ("Win streak now", str(sk["win streak"]), "", ""),
         ])
+    # after the whole KPI block, not inside it — and folded away until needed
+    charges_ui(book, rt)
 
     if close is None:
         st.caption("**Drawdown, CAGR, Calmar, the equity curve and the year / month tables "
