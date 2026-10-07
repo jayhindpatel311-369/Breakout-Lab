@@ -1031,9 +1031,18 @@ def mfe_report(rt: pd.DataFrame, close: pd.DataFrame | None,
     detail = detail.sort_values("max gain reached %", ascending=False).reset_index(drop=True)
 
     n = len(detail)
-    summary = pd.DataFrame([{
-        "reached at least": f"{b}%",
-        "stocks": int((detail["max gain reached %"] >= b).sum()),
-        "% of closed trades": round(float((detail["max gain reached %"] >= b).mean() * 100), 1),
-    } for b in bands if n])
+    mfe = detail["max gain reached %"]
+    first = bands[0] if bands else 20
+
+    def row(label, mask):
+        return {"how far it ran": label, "stocks": int(mask.sum()),
+                "% of closed trades": round(float(mask.mean() * 100), 1)}
+
+    # Trades that never got going count too: a list that starts at "20% or more"
+    # leaves the ones that went nowhere — usually most of the losers — out of the
+    # picture entirely, and the rows read as if there were no closed trades.
+    rows_ = [row("Never above entry", mfe <= 0),
+             row(f"Up, but under {first}%", (mfe > 0) & (mfe < first))]
+    rows_ += [row(f"Reached at least {b}%", mfe >= b) for b in bands]
+    summary = pd.DataFrame(rows_ if n else [])
     return {"detail": detail, "summary": summary}

@@ -150,13 +150,54 @@ except Exception:
 _WIDE = {"width": "stretch"} if _ST_VER >= (1, 49) else {"use_container_width": True}
 
 
-def show_df(df, **kw):
-    # A frame indexed by symbol (the ranker's output, fundamentals) used to lose
-    # its stock names here — the index was hidden unconditionally. Hide only a
-    # plain 0..n row counter.
-    idx = getattr(df, "index", None)
-    plain = idx is None or (idx.name is None and pd.api.types.is_integer_dtype(idx))
-    return st.dataframe(df, **_WIDE, hide_index=plain, **kw)
+def show_df(df, height=None, **kw):
+    """Show a read-only table — as the app's own HTML table, not Streamlit's grid.
+
+    Streamlit's grid always left-aligns its headings while numbers sit right, so
+    no heading stood over its column. The HTML table puts every number column's
+    heading and values on the same centre line, text columns on the left, and
+    looks like every other table in the app. A symbol index (the ranker's
+    output, fundamentals) becomes the first column; a plain 0..n counter is
+    dropped. Very large frames keep the scrolling grid, which handles them.
+    """
+    if df is None:
+        return None
+    if hasattr(df, "data") and hasattr(df, "format"):        # a pandas Styler
+        df = df.data
+    if df.empty:
+        st.caption("No rows yet.")
+        return None
+    idx = df.index
+    plain = idx.name is None and pd.api.types.is_integer_dtype(idx)
+    if len(df) > 1500:
+        return st.dataframe(df, **_WIDE, hide_index=plain, height=height or 420, **kw)
+    view = df if plain else df.reset_index()
+    if not plain and idx.name is None:
+        view = view.rename(columns={view.columns[0]: ""})
+    html = saas_simple_html(view.reset_index(drop=True))
+    if height or len(view) > 12:
+        cap = int(height) if height else 460
+        html = html.replace('class="saas-wrap"',
+                            f'class="saas-wrap tall" style="max-height:{cap}px"', 1)
+    return st.markdown(html, unsafe_allow_html=True)
+
+
+def _fmt_cols(df: pd.DataFrame, fmts: dict) -> pd.DataFrame:
+    """Format named columns to text ("₹{:,.0f}" etc.) for display."""
+    out = df.copy()
+    for c, f in fmts.items():
+        if c in out.columns:
+            out[c] = out[c].map(lambda v: f.format(v) if pd.notna(v) else "—")
+    return out
+
+
+def _editor_cfg(df: pd.DataFrame) -> dict:
+    """Column config for data editors: values left-aligned, under their headings.
+
+    Streamlit's editor always draws its headings on the left and offers no way
+    to move them, so the values go left too — the only way a heading and its
+    column line up in an editable grid."""
+    return {c: st.column_config.Column(alignment="left") for c in df.columns}
 
 
 def show_money_df(df, money_cols=(), pct_cols=(), height=None):
@@ -581,8 +622,8 @@ def inject_css() -> None:
         .ptable tbody tr:hover td { background: var(--surface-muted); }
         .ptable td { padding: 9px 10px; border-bottom: 1px solid var(--divider); color: var(--text-1);
                      font-size: 13px; }
-        .ptable td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-        .ptable th.num { text-align: right; }
+        .ptable td.num { text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .ptable th.num { text-align: center; }
         .ptable tr:last-child td { border-bottom: none; }
         .ptable-empty { color: var(--text-3); font-size: 13px; padding: 8px 0; }
 
@@ -603,13 +644,13 @@ def inject_css() -> None:
         .saas-table th, .saas-table td, .ptable th, .ptable td, .hold-compact th, .hold-compact td {
             border-left: none !important; border-right: none !important; border-top: none !important;
         }
-        .saas-table th.num { text-align:right; }
+        .saas-table th.num { text-align:center; }
         .saas-table td {
             padding:12px 12px; border-bottom:1px solid var(--divider); color:var(--text-1);
             font-size:14px; vertical-align:middle;
         }
         .saas-table tr:last-child td { border-bottom:none; }
-        .saas-table td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .saas-table td.num { text-align:center; font-variant-numeric:tabular-nums; white-space:nowrap; }
         .saas-stock { display:flex; gap:10px; align-items:center; }
         .saas-av { width:34px; height:34px; min-width:34px; border-radius:50%;
                    display:inline-flex; align-items:center; justify-content:center;
@@ -1268,8 +1309,13 @@ def saas_simple_html(df: pd.DataFrame, money=(), pct=()) -> str:
                 except (TypeError, ValueError):
                     tds.append(_td(str(c), _esc(v), "num"))
             else:
-                if v is None or (isinstance(v, float) and not np.isfinite(v)):
+                if v is None or (isinstance(v, float) and not np.isfinite(v)) or v is pd.NaT:
                     shown = "—"
+                elif isinstance(v, (bool, np.bool_)):
+                    shown = "Yes" if v else "No"
+                elif isinstance(v, (pd.Timestamp, datetime, date)):
+                    t = pd.Timestamp(v)
+                    shown = t.strftime("%d %b %Y") if t == t.normalize() else t.strftime("%d %b %Y %H:%M")
                 elif isinstance(v, (float, np.floating)):
                     shown = f"{float(v):,.0f}" if float(v).is_integer() else f"{float(v):,.2f}"
                 elif isinstance(v, (int, np.integer)) and not isinstance(v, bool):
@@ -2705,6 +2751,7 @@ def drafts_ui(book: jn.Book, last_px: pd.Series | None) -> None:
                             "fill price": round(d.decision_price, 2),
                             "stop": round(d.stop, 2)} for d in book.drafts])
         edited = st.data_editor(ed, **_WIDE, key="draft_editor", hide_index=True,
+                                 column_config=_editor_cfg(ed),
                                  disabled=["symbol"])
         c1, c2, c3 = st.columns([1, 1, 2])
         fill_date = c1.date_input("Fill date", value=_last_session(), key="draft_fill_date")
@@ -3587,7 +3634,7 @@ def tab_backtest(s: dict) -> None:
         yb = yearly_breakdown(res)
         if not yb.empty:
             show_chart(ch.yearly_bars(yb.rename(columns={"Return (%)": "Return (%)"})))
-            show_df(yb.style.format({
+            show_df(_fmt_cols(yb, {
                 "Return (%)": "{:,.2f}", "Start Capital": "₹{:,.0f}", "End Capital": "₹{:,.0f}",
                 "Net Profit": "₹{:,.0f}", "Max drawdown %": "{:,.2f}",
                 "Max capital used": "₹{:,.0f}", "Max used %": "{:,.1f}",
@@ -3604,7 +3651,7 @@ def tab_backtest(s: dict) -> None:
         if not mb.empty:
             st.caption("**Max capital used** is the peak cost of open positions during that month — "
                        "how much of your money was actually in the market, not its mark-to-market value.")
-            show_df(mb.style.format({
+            show_df(_fmt_cols(mb, {
                 "Return %": "{:,.2f}", "Equity (end)": "₹{:,.0f}", "Max capital used": "₹{:,.0f}",
                 "Max used %": "{:,.1f}", "Avg capital used": "₹{:,.0f}", "Avg open": "{:,.1f}",
                 "Booked P&L": "₹{:,.0f}",
@@ -4034,6 +4081,7 @@ def tab_buys(s: dict) -> None:
         editor = editor.rename(columns={"stop in force": "stop"})
         editor.insert(0, "take", True)
         edited = st.data_editor(editor, **_WIDE, key="buy_editor", hide_index=True,
+                                 column_config=_editor_cfg(editor),
                                  disabled=["decision price"])
 
         c1, c2 = st.columns([1, 3])
@@ -4334,6 +4382,7 @@ def tab_positions(s: dict) -> None:
             ed = ed.rename(columns={"last_close": "fill price"})
             ed.insert(0, "sell", True)
             edited = st.data_editor(ed, **_WIDE, key="sell_editor", hide_index=True,
+                                     column_config=_editor_cfg(ed),
                                      disabled=["rung", "why"])
             c1, c2 = st.columns([1, 3])
             d = c1.date_input("Fill date", value=_last_session(), key="sell_date")
@@ -4717,7 +4766,9 @@ def tab_journal(s: dict) -> None:
                       "Highest daily close reached between entry and exit, vs what you actually "
                       "booked — needs 'Load prices for the full analysis' above"):
                 show_df(mfe["summary"])
-                st.caption("\"Reached at least 100%\" counts every trade whose price touched "
+                st.caption("**Never above entry** — the daily close never got over the buy "
+                           "price. **Up, but under 20%** — it went green but never ran. "
+                           "\"Reached at least 100%\" counts every trade whose price touched "
                            "100%+ at some point before it was finally exited — whatever rung "
                            "actually sold it. A trade that peaked at 220% is counted in the "
                            "100%, 150% and 200% rows too.")

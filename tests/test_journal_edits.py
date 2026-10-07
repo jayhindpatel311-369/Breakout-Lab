@@ -58,3 +58,18 @@ def test_charges_set_replace_remove_and_persist(tmp_path):
     blob.pop("charges")
     json.dump(blob, open(path, "w"))
     assert jn.load_book(path).charges == []
+
+
+def test_mfe_summary_counts_trades_that_never_ran():
+    b = jn.Book(name="t", capital=1_000_000, cash=1_000_000)
+    b.buy("FLAT", pd.Timestamp("2026-09-01").date(), 10, 100.0, 90)
+    b.sell("FLAT", pd.Timestamp("2026-09-10").date(), 10, 95.0, "manual")
+    b.buy("SMALL", pd.Timestamp("2026-09-01").date(), 10, 100.0, 90)
+    b.sell("SMALL", pd.Timestamp("2026-09-10").date(), 10, 104.0, "manual")
+    idx = pd.bdate_range("2026-09-01", "2026-09-10")
+    close = pd.DataFrame({"FLAT": [100.0, 98, 97, 96, 95, 95, 95, 95],
+                          "SMALL": [100.0, 103, 108, 106, 104, 104, 104, 104]}, index=idx)
+    summ = js.mfe_report(js.round_trips(b), close)["summary"].set_index("how far it ran")
+    assert summ.loc["Never above entry", "stocks"] == 1
+    assert summ.loc["Up, but under 20%", "stocks"] == 1
+    assert summ.loc["Reached at least 20%", "stocks"] == 0
