@@ -28,6 +28,62 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+# --------------------------------------------------------------------------- #
+# Fresh code after a deploy. Streamlit re-runs app.py on every interaction but
+# keeps modules it imported earlier in memory, so after a git pull the new
+# app.py ran against the OLD core/*.py — the ImportError after one merge, the
+# half-updated journal table after another. If any core file on disk differs
+# from what is loaded, reload them all, dependencies first.
+# --------------------------------------------------------------------------- #
+_CORE_ORDER = (
+    "core.storage", "core.data", "core.metrics", "core.charts", "core.universe",
+    "core.nse", "core.indices", "core.fundamentals", "core.screen", "core.exits",
+    "core.breakout", "core.engine", "core.journal", "core.journal_stats",
+    "core.corpact", "core.gainers", "core.rs", "core.chartink", "core.params",
+    "core.gvault",
+)
+
+
+def _reload_changed_core() -> bool:
+    import importlib
+    import sys as _sys
+    loaded = [(n, _sys.modules[n]) for n in _CORE_ORDER if n in _sys.modules]
+    if not loaded:
+        return False                       # first run in this process: plain import
+    stale = False
+    for _n, m in loaded:
+        try:
+            mt = os.path.getmtime(m.__file__)
+        except (OSError, TypeError, AttributeError):
+            continue
+        # no stamp = imported by an older app.py that had no guard: reload once
+        if getattr(m, "_bl_mtime", None) != mt:
+            stale = True
+            break
+    if not stale:
+        return False
+    for n in _CORE_ORDER:
+        if n in _sys.modules:
+            try:
+                importlib.reload(_sys.modules[n])
+            except Exception:              # a broken file should fail loudly below
+                pass
+    return True
+
+
+def _stamp_core() -> None:
+    import sys as _sys
+    for n in _CORE_ORDER:
+        m = _sys.modules.get(n)
+        if m is not None:
+            try:
+                m._bl_mtime = os.path.getmtime(m.__file__)
+            except (OSError, TypeError, AttributeError):
+                pass
+
+
+_CORE_RELOADED = _reload_changed_core()
+
 from core import charts as ch
 from core import data as data_mod
 from core import fundamentals as fund_mod
@@ -71,6 +127,8 @@ from core import rs as rs_mod
 from core import params as pm
 from core import storage as sg
 import core.gvault as gv
+
+_stamp_core()
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 _ZIP_SKIP_DIR = {"__pycache__", ".git", ".venv", "price_cache", "journal", "backups"}
@@ -4766,12 +4824,12 @@ def tab_journal(s: dict) -> None:
                       "Highest daily close reached between entry and exit, vs what you actually "
                       "booked — needs 'Load prices for the full analysis' above"):
                 show_df(mfe["summary"])
-                st.caption("**Never above entry** — the daily close never got over the buy "
-                           "price. **Up, but under 20%** — it went green but never ran. "
-                           "\"Reached at least 100%\" counts every trade whose price touched "
-                           "100%+ at some point before it was finally exited — whatever rung "
-                           "actually sold it. A trade that peaked at 220% is counted in the "
-                           "100%, 150% and 200% rows too.")
+                st.caption("Every trade is counted **once**, in the band its highest "
+                           "daily close reached before it was finally exited — whatever rung "
+                           "actually sold it. A trade that peaked at 220% sits in "
+                           "**200% – 300%** only, so the rows add up to your closed trades. "
+                           "**Never above entry** — the close never got over the buy price. "
+                           "**Up, but under 20%** — it went green but never ran.")
                 with st.expander("Every closed trade"):
                     show_df(mfe["detail"])
                     st.caption("\"Left on the table\" = max gain reached − what you actually "
@@ -4965,6 +5023,10 @@ def tab_universe(s: dict) -> None:
 # main
 # --------------------------------------------------------------------------- #
 def main() -> None:
+    if _CORE_RELOADED:
+        # a Book made by the old journal module lacks whatever the new one added
+        for k in ("_book", "_book_cache_path"):
+            st.session_state.pop(k, None)
     st.session_state["_card_seq"] = 0
     hydrate_books_from_browser()
     s = sidebar()

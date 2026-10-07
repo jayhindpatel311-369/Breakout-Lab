@@ -72,4 +72,26 @@ def test_mfe_summary_counts_trades_that_never_ran():
     summ = js.mfe_report(js.round_trips(b), close)["summary"].set_index("how far it ran")
     assert summ.loc["Never above entry", "stocks"] == 1
     assert summ.loc["Up, but under 20%", "stocks"] == 1
-    assert summ.loc["Reached at least 20%", "stocks"] == 0
+    assert summ.loc["20% – 50%", "stocks"] == 0
+    assert "70% – 100%" not in summ.index and "150% – 200%" not in summ.index
+
+
+def test_mfe_summary_counts_each_trade_once():
+    b = jn.Book(name="t", capital=10_000_000, cash=10_000_000)
+    peaks = {"A": 320.0, "B": 160.0, "C": 125.0, "D": 90.0, "E": 700.0}
+    for s in peaks:
+        b.buy(s, pd.Timestamp("2026-09-01").date(), 10, 100.0, 90)
+        b.sell(s, pd.Timestamp("2026-09-10").date(), 10, 110.0, "manual")
+    idx = pd.bdate_range("2026-09-01", "2026-09-10")
+    close = pd.DataFrame({s: [100.0, p, p, 110, 110, 110, 110, 110] for s, p in peaks.items()},
+                         index=idx)
+    summ = js.mfe_report(js.round_trips(b), close)["summary"].set_index("how far it ran")
+    assert summ.loc["200% – 300%", "stocks"] == 1          # A peaked at +220%
+    assert summ.loc["100% – 200%", "stocks"] == 0
+    assert summ.loc["50% – 100%", "stocks"] == 1           # B +60%
+    assert summ.loc["20% – 50%", "stocks"] == 1            # C +25%
+    assert summ.loc["Up, but under 20%", "stocks"] == 1    # D: later closes at 110
+    assert summ.loc["500% or more", "stocks"] == 1         # E +600%
+    body = summ.drop("Total closed trades")
+    assert body["stocks"].sum() == summ.loc["Total closed trades", "stocks"] == 5
+    assert abs(body["% of closed trades"].sum() - 100) < 0.5
