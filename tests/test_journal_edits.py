@@ -1,5 +1,6 @@
 import json
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -95,3 +96,68 @@ def test_mfe_summary_counts_each_trade_once():
     body = summ.drop("Total closed trades")
     assert body["stocks"].sum() == summ.loc["Total closed trades", "stocks"] == 5
     assert abs(body["% of closed trades"].sum() - 100) < 0.5
+
+
+def _two_month_book():
+    b = jn.Book(name="t", capital=1_000_000, cash=1_000_000)
+    b.buy("AAA", pd.Timestamp("2026-01-05").date(), 100, 100.0, 90)
+    b.sell("AAA", pd.Timestamp("2026-01-30").date(), 100, 120.0, "manual")
+    b.buy("BBB", pd.Timestamp("2026-02-02").date(), 100, 100.0, 90)
+    b.sell("BBB", pd.Timestamp("2026-02-27").date(), 100, 95.0, "manual")
+    return b
+
+
+def test_monthly_return_grid_from_booked_pnl():
+    b = _two_month_book()
+    grid, basis = js.monthly_return_grid(None, b.capital, rt=js.round_trips(b))
+    assert basis == "booked"
+    assert grid.loc[2026, 1] == 0.2 and grid.loc[2026, 2] == -0.05
+    assert abs(grid.loc[2026, "Year"] - 0.15) < 1e-9
+
+
+def test_monthly_return_grid_matches_equity_months():
+    idx = pd.bdate_range("2026-01-01", "2026-02-27")
+    eq = pd.Series(np.linspace(1_000_000, 1_100_000, len(idx)), index=idx)
+    grid, basis = js.monthly_return_grid(eq, 1_000_000)
+    mt = js.monthly(eq, capital=1_000_000)
+    assert basis == "equity"
+    assert grid.loc[2026, 1] == mt["Return %"].iloc[0]
+    expect = ((1 + mt["Return %"].iloc[0] / 100) * (1 + mt["Return %"].iloc[1] / 100) - 1) * 100
+    assert abs(grid.loc[2026, "Year"] - expect) < 0.02
+
+
+def test_weekly_pnl_candles_chain_and_end_on_total_pnl():
+    idx = pd.bdate_range("2026-01-05", "2026-01-30")
+    eq = pd.Series(1_000_000 + np.arange(len(idx)) * 1000.0, index=idx)
+    c = js.weekly_pnl_candles(eq, 1_000_000)
+    assert len(c) == 4
+    assert c["open"].iloc[0] == 0
+    assert (c["open"].iloc[1:].values == c["close"].iloc[:-1].values).all()
+    assert c["close"].iloc[-1] == eq.iloc[-1] - 1_000_000
+    assert (c["high"] >= c[["open", "close"]].max(axis=1)).all()
+
+
+def test_weekly_pnl_candles_take_deposits_out():
+    idx = pd.bdate_range("2026-01-05", "2026-01-16")
+    eq = pd.Series(1_000_000.0, index=idx)
+    eq.loc["2026-01-12":] += 500_000                     # a deposit, not a profit
+    flows = pd.Series({pd.Timestamp("2026-01-12"): 500_000.0})
+    c = js.weekly_pnl_candles(eq, 1_500_000, flows)
+    assert c["close"].abs().max() == 0
+
+
+def test_pnl_by_stock_sums_round_trips():
+    b = _two_month_book()
+    b.buy("AAA", pd.Timestamp("2026-03-02").date(), 100, 100.0, 90)
+    b.sell("AAA", pd.Timestamp("2026-03-20").date(), 100, 110.0, "manual")
+    t = js.pnl_by_stock(js.round_trips(b))
+    assert list(t["symbol"]) == ["AAA", "BBB"]
+    assert t.loc[0, "pnl"] == 3000 and t.loc[0, "trades"] == 2
+
+
+def test_relative_returns_rebase_to_zero():
+    idx = pd.bdate_range("2026-01-01", periods=5)
+    r = js.relative_returns({"a": pd.Series([100, 110, 121, 121, 121.0], idx),
+                             "b": pd.Series([50, 50, 55, 60, 60.0], idx)})
+    assert (r.iloc[0] == 0).all()
+    assert r["a"].iloc[2] == 21.0 and r["b"].iloc[3] == 20.0

@@ -1049,3 +1049,112 @@ def mfe_report(rt: pd.DataFrame, close: pd.DataFrame | None,
                   "% of closed trades": 100.0})
     summary = pd.DataFrame(rows_ if n else [])
     return {"detail": detail, "summary": summary}
+
+
+# --------------------------------------------------------------------------- #
+# the one-glance journal: returns grid, weekly P&L candles, P&L by stock
+# --------------------------------------------------------------------------- #
+def monthly_return_grid(eq: pd.Series | None, capital: float,
+                        flows: pd.Series | None = None,
+                        rt: pd.DataFrame | None = None) -> tuple[pd.DataFrame, str]:
+    """Year × month table of returns in %, plus a compounded "Year" column.
+
+    With a daily equity curve the months are the equity curve's own (open
+    positions marked to market, deposits taken out) — the same numbers as the
+    month-by-month table, so the two never disagree. Without prices it falls
+    back to booked P&L over book capital, and says so in the second value.
+    """
+    cols = list(range(1, 13))
+    if eq is not None and len(eq) > 2:
+        mt = monthly(eq, capital=capital, flows=flows)
+        if mt.empty:
+            return pd.DataFrame(), ""
+        per = pd.PeriodIndex(mt["Month"], freq="M")
+        vals = pd.Series(mt["Return %"].values, index=per)
+        basis = "equity"
+    elif rt is not None and not rt.empty and capital:
+        d = rt.copy()
+        d["ym"] = pd.to_datetime(d["exit_date"]).dt.to_period("M")
+        vals = d.groupby("ym")["P&L"].sum() / float(capital) * 100.0
+        basis = "booked"
+    else:
+        return pd.DataFrame(), ""
+    years = sorted({p.year for p in vals.index})
+    grid = pd.DataFrame(np.nan, index=years, columns=cols)
+    for p, v in vals.items():
+        grid.loc[p.year, p.month] = round(float(v), 2)
+    if basis == "equity":
+        yr = grid.apply(lambda r: (np.prod(1 + r.dropna() / 100.0) - 1) * 100.0, axis=1)
+    else:
+        yr = grid.sum(axis=1, min_count=1)
+    grid["Year"] = yr.round(2)
+    grid.index.name = "year"
+    return grid, basis
+
+
+def weekly_pnl_candles(eq: pd.Series | None, capital: float,
+                       flows: pd.Series | None = None) -> pd.DataFrame:
+    """Total P&L (realised + unrealised) as one candle per Friday week.
+
+    The daily equity curve already carries both — booked P&L in cash, open
+    positions at the day's close — so total P&L on any day is equity minus the
+    money put in up to that day. Each week's candle is that number's open, high,
+    low and close, which shows what a week did to the book even when nothing
+    was sold.
+    """
+    if eq is None or len(eq) < 2:
+        return pd.DataFrame()
+    e = eq.dropna().sort_index().astype(float)
+    flow_s = flows.dropna() if flows is not None and len(flows) else pd.Series(dtype=float)
+    inception = float(capital) - (float(flow_s.sum()) if len(flow_s) else 0.0)
+    if len(flow_s):
+        put_in = flow_s.reindex(e.index.union(flow_s.index), fill_value=0.0).sort_index().cumsum()
+        put_in = put_in.reindex(e.index, method="ffill").fillna(0.0)
+    else:
+        put_in = pd.Series(0.0, index=e.index)
+    pnl = e - inception - put_in
+    # the week opens where the last one closed, so the candles join up
+    w = pnl.resample("W-FRI").agg(["first", "max", "min", "last"]).dropna()
+    if w.empty:
+        return pd.DataFrame()
+    prev_close = w["last"].shift(1).fillna(0.0)
+    out = pd.DataFrame({
+        "open": prev_close,
+        "high": np.maximum(w["max"], prev_close),
+        "low": np.minimum(w["min"], prev_close),
+        "close": w["last"],
+    })
+    out["change"] = out["close"] - out["open"]
+    return out.round(0)
+
+
+def pnl_by_stock(rt: pd.DataFrame | None, n: int = 10) -> pd.DataFrame:
+    """Booked P&L per stock — every round trip in it added up — biggest first."""
+    if rt is None or rt.empty:
+        return pd.DataFrame()
+    g = rt.groupby("symbol").agg(pnl=("P&L", "sum"), trades=("P&L", "size"),
+                                 capital=("capital", "sum"))
+    g["return %"] = np.where(g["capital"] > 0, g["pnl"] / g["capital"] * 100.0, np.nan)
+    g = g.sort_values("pnl", ascending=False)
+    return g.head(n).reset_index()
+
+
+def relative_returns(series: dict[str, pd.Series], start=None) -> pd.DataFrame:
+    """Several price/equity series rebased to % return from a common start day."""
+    frames = {}
+    for name, s in series.items():
+        if s is None or len(s) < 2:
+            continue
+        s = s.dropna().astype(float)
+        s.index = pd.DatetimeIndex([pd.Timestamp(d).normalize() for d in s.index])
+        s = s[~s.index.duplicated(keep="last")].sort_index()
+        frames[name] = s
+    if not frames:
+        return pd.DataFrame()
+    df = pd.DataFrame(frames).sort_index().ffill()
+    first = pd.Timestamp(start).normalize() if start is not None else df.dropna(how="all").index[0]
+    df = df[df.index >= first]
+    if df.empty:
+        return df
+    base = df.bfill().iloc[0]
+    return ((df / base - 1.0) * 100.0).round(2)

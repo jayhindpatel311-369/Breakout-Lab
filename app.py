@@ -609,6 +609,56 @@ def inject_css() -> None:
         .tile-value.pos { color: var(--pos); }
         .tile-value.neg { color: var(--neg); }
         .tile-sub { font-size: 12.5px; color: var(--text-3); margin-top: 6px; line-height: 1.4; }
+        .tile { position: relative; }
+        .tile.has-art { padding-right: 96px; }
+        .tile-art { position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+                    line-height: 0; }
+        .tile-value, .cal-kpi .v { overflow-wrap: anywhere; }
+
+        /* trade quality bars */
+        .tq-row { margin: 4px 0 14px; }
+        .tq-top { display:flex; justify-content:space-between; font-size:13.5px; font-weight:600;
+                  color: var(--text-1); }
+        .tq-track { height:7px; border-radius:6px; background: var(--divider); margin-top:7px; overflow:hidden; }
+        .tq-fill { height:7px; border-radius:6px; }
+        .tq-fill.pos { background: var(--pos); } .tq-fill.neg { background: var(--neg); }
+        .tq-foot { border-top:1px solid var(--divider); padding-top:10px; margin-top:4px;
+                   font-size:12.5px; color: var(--text-3); line-height:1.8; }
+        .tq-foot b { color: var(--text-1); }
+        .tq-empty { color: var(--text-3); font-size: 13px; }
+
+        /* monthly returns, factsheet style */
+        .rg-wrap { overflow-x: auto; margin: 2px 0 6px; }
+        table.rg { width:100%; border-collapse: separate; border-spacing: 4px; min-width: 760px; }
+        table.rg th { font-size: 11px; font-weight: 600; color: var(--text-3); text-align: center;
+                      padding: 2px 0 4px; }
+        table.rg th.y { font-size: 13.5px; font-weight: 700; color: var(--text-1); text-align: left;
+                        padding-right: 6px; }
+        table.rg td { text-align:center; padding:0; font-variant-numeric: tabular-nums; }
+        table.rg, table.rg th, table.rg td, table.rg tr { border: none !important; background: transparent !important; }
+        table.rg td span { display:block; border-radius: 8px; padding: 8px 0; font-size: 12.5px; font-weight: 600; }
+        table.rg td.na { color: #C3C9D4; font-size: 12px; }
+        table.rg td.yr { font-size: 14px; font-weight: 700; padding-left: 8px; }
+
+        /* one-month calendar */
+        .mc-top { display:flex; justify-content:space-between; align-items:center; margin: 2px 0 10px;
+                  font-size: 14px; color: var(--text-2); }
+        .mc-top > b { font-size: 16px; color: var(--text-1); }
+        .mc { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)) minmax(0,1.1fr); gap: 6px; }
+        .mc-h { font-size: 11px; font-weight: 600; color: var(--text-3); text-align: center; padding: 2px 0; }
+        .mc-d { min-height: 74px; border: 1px solid var(--border); border-radius: 10px; padding: 7px 9px;
+                background: var(--surface); min-width: 0; }
+        .mc-out { background: var(--bg); border-color: transparent; }
+        .mc-pos { background: var(--pos-soft); border-color: var(--pos-border); }
+        .mc-neg { background: var(--neg-soft); border-color: var(--neg-border); }
+        .mc-w { background: var(--accent-soft); border-color: transparent; }
+        .mc-n { display:flex; justify-content:space-between; align-items:center; font-size: 11.5px;
+                color: var(--text-3); }
+        .mc-v { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text-3);
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .mc-s { font-size: 11px; color: var(--text-3); }
+        .mc-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background: var(--accent); }
+        .mc-leg { font-size: 11.5px; color: var(--text-3); margin-top: 10px; }
         .pos { color: var(--pos) !important; }
         .neg { color: var(--neg) !important; }
         .note {
@@ -899,7 +949,10 @@ def inject_css() -> None:
                 padding-bottom: max(5.5rem, env(safe-area-inset-bottom)) !important;
                 max-width: 100% !important;
             }
-            header[data-testid="stHeader"] { height: 3.2rem; }
+            /* solid bar on phones: content scrolls under it instead of
+               showing through behind the Share / star / edit icons */
+            header[data-testid="stHeader"] { height: 3.2rem; background: var(--bg) !important;
+                box-shadow: 0 1px 0 var(--divider); }
             [data-testid="collapsedControl"],
             [data-testid="stSidebarCollapsedControl"],
             [data-testid="stBaseButton-headerNoPadding"] {
@@ -915,6 +968,22 @@ def inject_css() -> None:
             .tile-label { font-size: 10px; margin-bottom: 4px; }
             .tile-sub { font-size: 11px; }
             .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+            .tile.has-art { padding-right: 12px; }
+            .tile-art { display: none; }
+            /* the secondary strip: two even columns, hairlines between rows */
+            .stat-strip { padding: 4px 0 0; }
+            .stat-strip .cal-kpis { display: grid; grid-template-columns: 1fr 1fr; row-gap: 0;
+                                    padding: 0; }
+            .stat-strip .cal-kpi { min-width: 0; padding: 10px 12px; border-right: none;
+                                   border-bottom: 1px solid var(--divider); }
+            .stat-strip .cal-kpi:nth-child(odd) { border-right: 1px solid var(--divider); }
+            .stat-strip .cal-kpi .k { font-size: 10px; margin-bottom: 3px; }
+            .stat-strip .cal-kpi .v { font-size: 17px; }
+            .stat-strip .cal-kpi .s { font-size: 11px; }
+            .mc { gap: 3px; grid-template-columns: repeat(5, minmax(0,1fr)) minmax(0,1.2fr); }
+            .mc-d { min-height: 54px; padding: 4px 5px; border-radius: 8px; }
+            .mc-v { font-size: 11px; }
+            .mc-s, .mc-h { font-size: 9.5px; }
             .act-headline { font-size: 20px; }
             .act-sub { font-size: 13px; }
             .act-banner { padding: 14px 14px 10px; }
@@ -1095,13 +1164,16 @@ def _tile_icon_css() -> str:
     return "\n".join(rules)
 
 
-def tile(label: str, value: str, sub: str = "", tone: str = "") -> str:
+def tile(label: str, value: str, sub: str = "", tone: str = "", art: str = "") -> str:
     kind = " tile-good" if tone == "pos" else (" tile-bad" if tone == "neg" else "")
+    if art:
+        kind += " has-art"
     valcls = f" {tone}" if tone else ""
     sub_html = f'<div class="tile-sub">{sub}</div>' if sub else ""
     key = "".join(ch_ if ch_.isalnum() else "-" for ch_ in str(label).lower()).strip("-")
+    art_html = f'<div class="tile-art">{art}</div>' if art else ""
     return (f'<div class="tile{kind}" data-k="{key}"><div class="tile-label">{label}</div>'
-            f'<div class="tile-value{valcls}">{value}</div>{sub_html}</div>')
+            f'<div class="tile-value{valcls}">{value}</div>{sub_html}{art_html}</div>')
 
 
 def page_head(title: str, sub: str = "") -> None:
@@ -1141,7 +1213,7 @@ def stat_strip(items) -> None:
 
 def tiles_row(items) -> None:
     n = max(1, len(items))
-    html = "".join(tile(lab, val, sub, tone) for lab, val, sub, tone in items)
+    html = "".join(tile(*it) for it in items)
     st.markdown(f'<div class="kpi-grid n-{n}">{html}</div>', unsafe_allow_html=True)
 
 
@@ -3319,6 +3391,7 @@ def equity_figure(equity: pd.Series, bench: pd.Series | None,
                   pct: bool = False) -> go.Figure:
     t = ch.theme()
     fig = go.Figure()
+    ticksuffix = ""
     y = equity.values.astype(float)
     start = float(y[0]) if len(y) else 0.0
     if pct and start != 0:
@@ -3328,6 +3401,15 @@ def equity_figure(equity: pd.Series, bench: pd.Series | None,
         tickprefix = ""
         tickformat = "+,.2f"
         fill = "tozeroy"
+        fillcolor = t["accent_fill"]
+    elif np.nanmax(np.abs(y)) >= 1e5:
+        # lakhs read faster than ₹10,000,000 — the unit the rest of the app uses
+        y = y / 1e5
+        title = "Portfolio (₹ lakh)"
+        hover = "₹%{y:,.2f} L"
+        tickprefix = "₹"
+        tickformat = ",.1f"
+        ticksuffix = " L"
         fillcolor = t["accent_fill"]
     else:
         title = "Portfolio (₹)"
@@ -3346,7 +3428,7 @@ def equity_figure(equity: pd.Series, bench: pd.Series | None,
     ymin, ymax = float(np.nanmin(y)), float(np.nanmax(y))
     pad = max((ymax - ymin) * 0.2, (1.0 if pct else abs(ymin) * 0.002) or 1)
     ch.style(fig, height=340, ytitle=title)
-    fig.update_yaxes(tickprefix=tickprefix, tickformat=tickformat, range=[ymin - pad, ymax + pad])
+    fig.update_yaxes(tickprefix=tickprefix, ticksuffix=ticksuffix, tickformat=tickformat, range=[ymin - pad, ymax + pad])
     return fig
 
 
@@ -3375,152 +3457,324 @@ def weekly_equity(eq: pd.Series) -> pd.Series:
         return eq
 
 
-def _day_tone(pnl: float, scale: float) -> str:
-    if not np.isfinite(pnl) or abs(pnl) < 1:
-        return "be"
-    if pnl > 0:
-        return "lg" if pnl >= scale else "sg"
-    return "ll" if pnl <= -scale else "sl"
+# --------------------------------------------------------------------------- #
+# Journal at a glance — small pictures, one job each
+# --------------------------------------------------------------------------- #
+def _ring_svg(pct: float, colour: str, label: str) -> str:
+    """A progress ring for a headline tile (win rate, profit factor, drawdown)."""
+    p = 0.0 if not np.isfinite(pct) else max(0.0, min(100.0, float(pct)))
+    r, c = 24, 2 * np.pi * 24
+    return (f'<svg width="62" height="62" viewBox="0 0 62 62" aria-hidden="true">'
+            f'<circle cx="31" cy="31" r="{r}" fill="none" stroke="#EDF1F5" stroke-width="6"/>'
+            f'<circle cx="31" cy="31" r="{r}" fill="none" stroke="{colour}" stroke-width="6" '
+            f'stroke-linecap="round" stroke-dasharray="{c * p / 100:.1f} {c:.1f}" '
+            f'transform="rotate(-90 31 31)"/><text x="31" y="35" text-anchor="middle" '
+            f'font-size="11" font-weight="600" fill="#475569">{_esc(label)}</text></svg>')
 
 
-def trading_calendar_html(book: jn.Book, year: int, kpis: list | None = None) -> str:
-    """Mon–Fri year grid. Colour = that day's realised P&L (exits). Entries marked too."""
+def _spark_svg(values, colour: str, w: int = 92, h: int = 34) -> str:
+    v = np.asarray([x for x in values if np.isfinite(x)], float)
+    if len(v) < 2:
+        return ""
+    if len(v) > 60:
+        v = v[np.linspace(0, len(v) - 1, 60).astype(int)]
+    span = float(np.ptp(v)) or 1.0
+    pts = [(i * w / (len(v) - 1), h - 3 - (x - v.min()) / span * (h - 6)) for i, x in enumerate(v)]
+    line = " ".join(f"{a:.1f},{b:.1f}" for a, b in pts)
+    return (f'<svg width="{w}" height="{h}" aria-hidden="true"><polygon points="0,{h} {line} {w},{h}" '
+            f'fill="{colour}" fill-opacity=".12"/><polyline points="{line}" fill="none" '
+            f'stroke="{colour}" stroke-width="1.8" stroke-linejoin="round"/></svg>')
+
+
+def trade_quality_html(st_: dict, rt: pd.DataFrame, sk: dict | None = None) -> str:
+    """Average win / loss / trade, best and worst trade as bars on one scale."""
+    r_ = pd.to_numeric(rt["return %"], errors="coerce").dropna() if len(rt) else pd.Series(dtype=float)
+    rows = [("Average win", st_.get("Avg win %")), ("Average loss", st_.get("Avg loss %")),
+            ("Average trade", r_.mean() if len(r_) else None),
+            ("Best trade", r_.max() if len(r_) else None),
+            ("Worst trade", r_.min() if len(r_) else None)]
+    rows = [(lab, float(v)) for lab, v in rows if v is not None and np.isfinite(float(v))]
+    if not rows:
+        return '<div class="tq-empty">Close a trade to see these.</div>'
+    # one scale for all five, set by the ordinary rows so one +300% runner does
+    # not flatten the rest into slivers
+    ordinary = [abs(v) for _, v in rows if abs(v) < 100] or [abs(v) for _, v in rows]
+    top = max(ordinary) * 1.3 or 1.0
+    out = []
+    for lab, v in rows:
+        cls = "pos" if v >= 0 else "neg"
+        w = min(100.0, abs(v) / top * 100.0)
+        out.append(f'<div class="tq-row"><div class="tq-top"><span>{lab}</span>'
+                   f'<span class="{cls}">{v:+.1f}%</span></div><div class="tq-track">'
+                   f'<div class="tq-fill {cls}" style="width:{w:.0f}%"></div></div></div>')
+    foot = []
+    rr = st_.get("Risk-reward", np.nan)
+    if rr is not None and np.isfinite(rr):
+        foot.append(f"Risk : reward <b>{_safe_ratio(rr)}</b>")
+    hd = st_.get("Avg days held", np.nan)
+    if hd is not None and np.isfinite(hd):
+        foot.append(f"avg hold <b>{hd / 7:,.1f} weeks</b>")
+    if sk:
+        foot.append(f'streaks <b class="pos">{sk["max win streak"]} W</b> · '
+                    f'<b class="neg">{sk["max loss streak"]} L</b>')
+    tail = f'<div class="tq-foot">{" · ".join(foot)}</div>' if foot else ""
+    return '<div class="tq">' + "".join(out) + tail + "</div>"
+
+
+def returns_grid_html(grid: pd.DataFrame) -> str:
+    """Year × month returns as a coloured table — a fund factsheet's calendar."""
+    if grid is None or grid.empty:
+        return ""
+    months = list(calmod.month_abbr)[1:]
+    head = "".join(f"<th>{m}</th>" for m in months) + '<th class="yr">Year</th>'
+    vals = grid[list(range(1, 13))].abs().stack()
+    scale = max(float(vals.quantile(0.9)) if len(vals) else 1.0, 1.0)
+    body = []
+    for y, r in grid.iterrows():
+        cells = []
+        for m in range(1, 13):
+            v = r[m]
+            if not np.isfinite(v):
+                cells.append('<td class="na">—</td>')
+                continue
+            a = min(1.0, abs(v) / scale) * 0.75 + 0.12
+            rgb = "15,123,85" if v >= 0 else "185,58,50"
+            ink = "#fff" if a > 0.55 else "var(--text-1)"
+            cells.append(f'<td><span style="background:rgba({rgb},{a:.2f});color:{ink}">'
+                         f'{v:+.1f}%</span></td>')
+        yv = r["Year"]
+        ycls = "pos" if np.isfinite(yv) and yv >= 0 else "neg"
+        ytxt = f"{yv:+.1f}%" if np.isfinite(yv) else "—"
+        body.append(f'<tr><th class="y">{int(y)}</th>{"".join(cells)}'
+                    f'<td class="yr {ycls}">{ytxt}</td></tr>')
+    return (f'<div class="rg-wrap"><table class="rg"><thead><tr><th></th>{head}</tr></thead>'
+            f'<tbody>{"".join(body)}</tbody></table></div>')
+
+
+def month_calendar_html(book: jn.Book, year: int, month: int) -> str:
+    """One month, Mon–Fri, with a week-total column. A cell shows only what
+    happened that day: booked P&L and how many exits; a dot marks an entry."""
     led = pd.DataFrame(book.ledger) if book.ledger else pd.DataFrame()
     pnl_by_day: dict[date, float] = {}
+    n_by_day: dict[date, int] = {}
     entry_days: set[date] = set()
     if not led.empty:
-        # The grid is Mon–Fri. A fill saved with a Saturday or Sunday date (the
-        # date box left on the calendar day) had no cell and simply vanished;
-        # it belongs to the Friday session before it.
         days = pd.to_datetime(led["date"])
         days = days - pd.to_timedelta((days.dt.weekday - 4).clip(lower=0), unit="D")
-        led["date"] = days.dt.date
+        led["day"] = days.dt.date
         led["pnl"] = pd.to_numeric(led.get("pnl"), errors="coerce").fillna(0.0)
-        for d, g in led.groupby("date"):
-            sells = g[g["side"].astype(str).str.upper() == "SELL"]
-            if len(sells):
-                pnl_by_day[d] = float(sells["pnl"].sum())
-            if (g["side"].astype(str).str.upper() == "BUY").any():
-                entry_days.add(d)
-    scale = max(float(book.capital) * 0.005, 10_000.0)
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-    cal = calmod.Calendar(firstweekday=0)
-    cols = []
-    for m in range(1, 13):
-        weeks = cal.monthdayscalendar(year, m)
-        rows = []
-        for wi, wd in enumerate(weekdays):
-            cells = []
-            for week in weeks:
-                dayn = week[wi]
-                if dayn == 0:
-                    cells.append('<span class="cal-empty"></span>')
-                    continue
-                d = date(year, m, dayn)
-                cls = "cal-day"
-                title = d.isoformat()
-                if d in pnl_by_day:
-                    pnl = pnl_by_day[d]
-                    cls += " cal-" + _day_tone(pnl, scale)
-                    title += f" · P&L ₹{pnl:+,.0f}"
-                elif d in entry_days:
-                    cls += " cal-en"
-                    title += " · entry"
-                cells.append(f'<span class="{cls}" title="{title}">{dayn}</span>')
-            rows.append(f'<div class="cal-row"><span class="cal-wd">{wd}</span>'
-                        + "".join(cells) + "</div>")
-        cols.append(f'<div class="cal-month"><div class="cal-mh">{months[m-1]}</div>'
-                    + "".join(rows) + "</div>")
-    kpi_html = ""
-    if kpis:
-        bits = []
-        for lab, val, sub, tone in kpis:
-            bits.append(
-                f'<div class="cal-kpi"><div class="k">{lab}</div>'
-                f'<div class="v {tone}">{val}</div>'
-                f'<div class="s">{sub}</div></div>'
-            )
-        kpi_html = '<div class="cal-kpis">' + "".join(bits) + "</div>"
-    legend = (
-        '<div class="cal-leg">'
-        '<span class="cal-day cal-lg"></span> Large gain'
-        '<span class="cal-day cal-sg"></span> Small gain'
-        '<span class="cal-day cal-be"></span> Breakeven'
-        '<span class="cal-day cal-sl"></span> Small loss'
-        '<span class="cal-day cal-ll"></span> Large loss'
-        '<span class="cal-day cal-en"></span> Entry'
-        "</div>"
-    )
-    return (
-        '<div class="cal-wrap">'
-        + kpi_html
-        + '<div class="cal-title">Trading calendar</div>'
-        + legend
-        + '<div class="cal-grid">' + "".join(cols) + "</div>"
-        + '<div class="cal-note">Colour = realised P&L on that day. '
-        "Weekly system — most days stay empty, that is normal.</div>"
-        "</div>"
-    )
+        side = led["side"].astype(str).str.upper()
+        for d, g in led[side == "SELL"].groupby("day"):
+            pnl_by_day[d] = float(g["pnl"].sum())
+            n_by_day[d] = len(g)
+        entry_days = set(led.loc[side == "BUY", "day"])
+    head = "".join(f'<div class="mc-h">{d}</div>' for d in ("Mon", "Tue", "Wed", "Thu", "Fri", "Week"))
+    cells = []
+    for wi, week in enumerate(calmod.Calendar(firstweekday=0).monthdayscalendar(year, month)):
+        if not any(week[:5]):
+            continue
+        wt, wn = 0.0, 0
+        for dn in week[:5]:
+            if not dn:
+                cells.append('<div class="mc-d mc-out"></div>')
+                continue
+            d = date(year, month, dn)
+            dot = '<span class="mc-dot" title="entry"></span>' if d in entry_days else ""
+            if d in pnl_by_day:
+                p, n = pnl_by_day[d], n_by_day[d]
+                wt += p
+                wn += n
+                cls = "pos" if p >= 0 else "neg"
+                cells.append(f'<div class="mc-d mc-{cls}"><div class="mc-n">{dn}{dot}</div>'
+                             f'<div class="mc-v {cls}">{_signed_rupees(p)}</div>'
+                             f'<div class="mc-s">{n} exit{"s" if n != 1 else ""}</div></div>')
+            else:
+                cells.append(f'<div class="mc-d"><div class="mc-n">{dn}{dot}</div></div>')
+        wcls = "pos" if wt > 0 else ("neg" if wt < 0 else "")
+        sub = f'<div class="mc-s">{wn} exit{"s" if wn != 1 else ""}</div>' if wn else ""
+        cells.append(f'<div class="mc-d mc-w"><div class="mc-n">Week {wi + 1}</div>'
+                     f'<div class="mc-v {wcls}">{_signed_rupees(wt) if wn else "—"}</div>{sub}</div>')
+    tot = sum(v for d, v in pnl_by_day.items() if d.year == year and d.month == month)
+    tcls = "pos" if tot > 0 else ("neg" if tot < 0 else "")
+    return (f'<div class="mc-top"><b>{calmod.month_name[month]} {year}</b>'
+            f'<span>Month <b class="{tcls}">{_signed_rupees(tot) if tot else "—"}</b></span></div>'
+            f'<div class="mc">{head}{"".join(cells)}</div>'
+            '<div class="mc-leg"><span class="mc-dot"></span> entry day · colour = booked '
+            'P&L that day · weekly system, so most days stay empty</div>')
 
 
-def weekly_pnl_figure(rt: pd.DataFrame) -> go.Figure:
+def pnl_candles_figure(c: pd.DataFrame) -> go.Figure:
+    """Total P&L (booked + open) as weekly candles."""
     t = ch.theme()
-    fig = go.Figure()
-    if rt is None or rt.empty:
-        return ch.style(fig, height=220)
-    d = rt.copy()
-    d["exit_date"] = pd.to_datetime(d["exit_date"])
-    d["week"] = d["exit_date"].dt.to_period("W-FRI").astype(str)
-    g = d.groupby("week", as_index=False)["P&L"].sum()
-    colors = [t["good"] if v >= 0 else t["critical"] for v in g["P&L"]]
-    fig.add_trace(go.Bar(x=g["week"], y=g["P&L"], marker_color=colors, name="Weekly P&L",
-                         width=[0.3] * len(g) if len(g) < 4 else None,
-                         hovertemplate="%{x}<br>₹%{y:,.0f}<extra></extra>"))
-    ch.style(fig, height=240, ytitle="P&L (₹)", xtitle="Week ending Friday")
-    fig.update_layout(showlegend=False)
-    return fig
-
-
-def donut_figure(title: str, labels, values, colors, center: str) -> go.Figure:
-    t = ch.theme()
-    fig = go.Figure(go.Pie(
-        labels=list(labels), values=list(values), hole=0.68,
-        marker=dict(colors=list(colors), line=dict(color=t["surface"], width=2)),
-        textinfo="none",
-        hoverinfo="label+value+percent",
+    big = float(c[["high", "low"]].abs().max().max()) >= 1e5
+    unit, suf = (1e5, " L") if big else (1.0, "")
+    c = c.copy()
+    c[["open", "high", "low", "close"]] = c[["open", "high", "low", "close"]] / unit
+    fig = go.Figure(go.Candlestick(
+        x=c.index, open=c["open"], high=c["high"], low=c["low"], close=c["close"],
+        increasing=dict(line=dict(color=t["good"], width=1), fillcolor=t["good"]),
+        decreasing=dict(line=dict(color=t["critical"], width=1), fillcolor=t["critical"]),
+        name="Total P&L", whiskerwidth=0.4,
     ))
-    ch.style(fig, height=220, hover="closest")
-    fig.update_layout(
-        showlegend=True,
-        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"),
-        annotations=[dict(text=center, x=0.5, y=0.5, showarrow=False,
-                          font=dict(size=18, color=t["text"], family=ch.FONT))],
-    )
+    last = float(c["close"].iloc[-1])
+    last_rs = last * unit
+    fig.add_hline(y=0, line=dict(color=t["axis"], width=1))
+    fig.add_hline(y=last, line=dict(color=t["good"] if last >= 0 else t["critical"], width=1, dash="dot"),
+                  annotation=dict(text=f"now {_signed_rupees(last_rs)}", font=dict(color="#fff", size=11),
+                                  bgcolor=t["good"] if last >= 0 else t["critical"], borderpad=3),
+                  annotation_position="top left")
+    ch.style(fig, height=300, ytitle="Total P&L (₹)")
+    fig.update_layout(showlegend=False, xaxis_rangeslider_visible=False)
+    fig.update_yaxes(tickprefix="₹", ticksuffix=suf, tickformat=",.1f" if big else ",.0f")
     return fig
 
 
-def exit_reason_figure(rb: pd.DataFrame) -> go.Figure:
+def monthly_return_bars(grid: pd.DataFrame) -> go.Figure:
+    t = ch.theme()
+    s = grid[list(range(1, 13))].stack().dropna()
+    labels = [f"{calmod.month_abbr[m]} {str(y)[2:]}" for y, m in s.index]
+    fig = go.Figure(go.Bar(
+        x=labels, y=s.values, marker_color=[t["good"] if v >= 0 else t["critical"] for v in s.values],
+        text=[f"{v:+.1f}%" for v in s.values], textposition="outside", cliponaxis=False,
+        textfont=dict(size=10, color=t["text2"]), hovertemplate="%{x}<br>%{y:+.2f}%<extra></extra>"))
+    ch.style(fig, height=230, ytitle="Return %")
+    lo, hi = float(min(0, s.min())), float(max(0, s.max()))
+    pad = (hi - lo) * 0.18 or 1
+    fig.update_yaxes(range=[lo - pad, hi + pad], ticksuffix="%")
+    fig.update_layout(showlegend=False)
+    return fig
+
+
+def booked_week_figure(rt: pd.DataFrame) -> go.Figure:
+    """Booked P&L per Friday week, with the average week as a dashed line."""
+    t = ch.theme()
+    d = rt.copy()
+    d["week"] = pd.to_datetime(d["exit_date"]).dt.to_period("W-FRI").dt.end_time.dt.normalize()
+    g = d.groupby("week")["P&L"].sum()
+    fig = go.Figure(go.Bar(x=g.index, y=g.values,
+                           marker_color=[t["good"] if v >= 0 else t["critical"] for v in g.values],
+                           hovertemplate="w/e %{x|%d %b %Y}<br>₹%{y:,.0f}<extra></extra>"))
+    if len(g) > 1:
+        a = float(g.mean())
+        fig.add_hline(y=a, line=dict(color=t["muted"], width=1, dash="dash"),
+                      annotation=dict(text=f"avg {_signed_rupees(a)}", font=dict(size=10, color=t["text2"])),
+                      annotation_position="top left")
+    ch.style(fig, height=260, ytitle="Booked P&L (₹)")
+    fig.update_yaxes(tickprefix="₹", tickformat=",.0s")
+    fig.update_layout(showlegend=False, bargap=0.3)
+    return fig
+
+
+def equity_vs_index_figure(rel: pd.DataFrame, mine: str) -> go.Figure:
     t = ch.theme()
     fig = go.Figure()
-    if rb is None or rb.empty:
-        return fig
-    col = "P&L" if "P&L" in rb.columns else rb.columns[-1]
-    lab = rb.index.astype(str) if rb.index.name or not isinstance(rb.index, pd.RangeIndex) else rb.iloc[:, 0].astype(str)
-    if not isinstance(rb.index, pd.RangeIndex) and rb.index.name:
-        y = rb.index.astype(str)
-        x = rb[col] if col in rb.columns else rb.iloc[:, -1]
-    else:
-        y = rb.iloc[:, 0].astype(str)
-        x = rb[col] if col in rb.columns else rb.iloc[:, -1]
-    colors = [t["good"] if float(v) >= 0 else t["critical"] for v in x]
-    fig.add_trace(go.Bar(x=x, y=y, orientation="h", marker_color=colors,
-                         hovertemplate="%{y}<br>₹%{x:,.0f}<extra></extra>"))
-    ch.style(fig, height=max(180, 32 * len(y) + 60), xtitle="P&L (₹)", hover="closest")
-    fig.update_xaxes(showgrid=True, gridcolor=ch.theme()["grid"])
-    fig.update_yaxes(showgrid=False, autorange="reversed")
-    fig.update_layout(showlegend=False)
+    others = [c for c in rel.columns if c != mine]
+    for i, c in enumerate(others):
+        fig.add_trace(go.Scatter(x=rel.index, y=rel[c], name=c, mode="lines",
+                                 line=dict(color=t["series"][(i + 1) % len(t["series"])], width=1.4),
+                                 hovertemplate=c + " %{y:+.2f}%<extra></extra>"))
+    fig.add_trace(go.Scatter(x=rel.index, y=rel[mine], name=mine, mode="lines",
+                             line=dict(color=t["accent"], width=2.6),
+                             hovertemplate=mine + " %{y:+.2f}%<extra></extra>"))
+    ch.style(fig, height=340, ytitle="Return from start (%)")
+    fig.update_yaxes(ticksuffix="%", zeroline=True, zerolinecolor=t["axis"])
+    return fig
+
+
+def hbar_figure(labels, values, money: bool = True, colour: str | None = None,
+                fmt=None) -> go.Figure:
+    t = ch.theme()
+    vals = [float(v) for v in values]
+    text = [fmt(v) if fmt else (_signed_rupees(v) if money else f"{v:+.1f}%") for v in vals]
+    fig = go.Figure(go.Bar(
+        y=list(labels), x=vals, orientation="h", text=text, cliponaxis=False,
+        marker_color=[colour or (t["good"] if v >= 0 else t["critical"]) for v in vals],
+        textposition="outside", textfont=dict(size=11),
+        hovertemplate="%{y}<br>%{text}<extra></extra>"))
+    ch.style(fig, height=max(200, 30 * len(vals) + 50), hover="closest")
+    fig.update_yaxes(autorange="reversed", showgrid=False)
+    lo, hi = min(0.0, min(vals)), max(0.0, max(vals))
+    span = (hi - lo) or 1.0
+    # head-room both sides so a value label never lands on the stock names
+    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=True, zerolinecolor=t["axis"],
+                     range=[lo - span * (0.28 if lo < 0 else 0.02), hi + span * 0.28])
+    fig.update_layout(showlegend=False, bargap=0.38, margin=dict(l=8, r=8, t=8, b=8))
+    return fig
+
+
+def mfe_figure(summary: pd.DataFrame) -> go.Figure:
+    t = ch.theme()
+    s = summary[summary["how far it ran"] != "Total closed trades"]
+    short = (s["how far it ran"].str.replace("Never above entry", "Never up", regex=False)
+             .str.replace("Up, but under ", "< ", regex=False)
+             .str.replace(" – ", "–", regex=False).str.replace("% or more", "%+", regex=False))
+    fig = go.Figure(go.Bar(
+        x=short, y=s["stocks"], marker_color=t["series"][3],
+        text=[f"{n} · {p:.0f}%" for n, p in zip(s["stocks"], s["% of closed trades"])],
+        textposition="outside", cliponaxis=False, textfont=dict(size=10, color=t["text2"]),
+        hovertemplate="%{x}<br>%{y} trades<extra></extra>"))
+    ch.style(fig, height=260, ytitle="Trades")
+    fig.update_yaxes(range=[0, max(1, float(s["stocks"].max())) * 1.25])
+    fig.update_layout(showlegend=False, bargap=0.3)
+    return fig
+
+
+def trade_figure(px: pd.DataFrame, pos, ladder, fills: pd.DataFrame,
+                 ema_fast: int = 20, ema_slow: int = 50) -> go.Figure:
+    """Weekly candles for one trade, with everything the ladder looks at."""
+    t = ch.theme()
+    w = px.resample("W-FRI").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+    ent = pd.Timestamp(pos.entry_date)
+    ef = w["Close"].ewm(span=ema_fast, adjust=False).mean()
+    es = w["Close"].ewm(span=ema_slow, adjust=False).mean()
+    lo_day = ent - pd.Timedelta(weeks=14)
+    last_fill = pd.to_datetime(fills["date"]).max() if not fills.empty else ent
+    hi_day = max(last_fill + pd.Timedelta(weeks=6), ent + pd.Timedelta(weeks=8))
+    keep = (w.index >= lo_day) & (w.index <= hi_day)
+    w, ef, es = w[keep], ef[keep], es[keep]
+    fig = go.Figure(go.Candlestick(
+        x=w.index, open=w["Open"], high=w["High"], low=w["Low"], close=w["Close"], name="weekly",
+        increasing=dict(line=dict(color=t["good"], width=1), fillcolor=t["good"]),
+        decreasing=dict(line=dict(color=t["critical"], width=1), fillcolor=t["critical"])))
+    fig.add_trace(go.Scatter(x=w.index, y=ef, name=f"EMA {ema_fast}", mode="lines",
+                             line=dict(color=t["accent"], width=1.5)))
+    fig.add_trace(go.Scatter(x=w.index, y=es, name=f"EMA {ema_slow}", mode="lines",
+                             line=dict(color=t["series"][1], width=1.5)))
+    e = float(pos.entry_price)
+    fig.add_hline(y=e, line=dict(color=t["muted"], width=1, dash="dot"),
+                  annotation=dict(text=f"entry ₹{e:,.1f}", font=dict(size=10, color=t["text2"])),
+                  annotation_position="bottom right")
+    stop = float(getattr(pos, "initial_stop", 0) or 0)
+    hard = float(getattr(pos, "hard_stop", 0) or 0)
+    stop = max(stop, hard) if hard else stop
+    if stop > 0:
+        fig.add_hline(y=stop, line=dict(color=t["critical"], width=1, dash="dash"),
+                      annotation=dict(text=f"stop ₹{stop:,.1f}", font=dict(size=10, color=t["critical"])),
+                      annotation_position="bottom left")
+    done = set(getattr(pos, "done", []) or [])
+    for r in ladder or []:
+        if getattr(r, "trigger", "") != "gain_pct" or not (r.book_pct or r.trail_to):
+            continue
+        lvl = e * (1 + float(r.value) / 100.0)
+        tag = "booked" if r.key in done else "target"
+        fig.add_hline(y=lvl, line=dict(color=t["good"], width=1, dash="dash"),
+                      annotation=dict(text=f"+{r.value:g}% · {tag}", font=dict(size=10, color=t["good"])),
+                      annotation_position="top left")
+    if not fills.empty:
+        f = fills.copy()
+        f["d"] = pd.to_datetime(f["date"])
+        for side, sym_, col in (("BUY", "triangle-up", t["accent"]), ("SELL", "triangle-down", t["series"][1])):
+            g = f[f["side"].astype(str).str.upper() == side]
+            if g.empty:
+                continue
+            fig.add_trace(go.Scatter(
+                x=g["d"].dt.to_period("W-FRI").dt.end_time.dt.normalize(), y=g["price"], mode="markers",
+                name="buy" if side == "BUY" else "sell",
+                marker=dict(symbol=sym_, size=12, color=col, line=dict(color="#fff", width=1.5)),
+                hovertemplate=side + " %{y:,.2f}<extra></extra>"))
+    ch.style(fig, height=380, ytitle="Price (₹)")
+    fig.update_layout(xaxis_rangeslider_visible=False)
+    fig.update_yaxes(tickprefix="₹")
     return fig
 
 
@@ -4587,38 +4841,14 @@ def tab_journal(s: dict) -> None:
     rt = js.round_trips(book)
     eq = js.equity_curve(book, close)
     charges = book.total_charges()
-    n_months = len(book.charges)
 
-    tiles_row([
-        ("Gross P&L", _signed_rupees(st_["Net P&L"]),
-         "ledger only — before brokerage/STT/charges", tone_of(st_["Net P&L"])),
-        ("Net P&L (after charges)", _signed_rupees(st_["Net P&L"] - charges),
-         (f"− {rupees(charges)} charges entered for {n_months} month(s)" if n_months
-          else "no charges entered yet — add them in the Charges section below the tiles"),
-         tone_of(st_["Net P&L"] - charges)),
-        ("Realised P&L", _signed_rupees(st_["Realised P&L"]),
-         "booked exits, before costs", tone_of(st_["Realised P&L"])),
-        ("Unrealised P&L", _signed_rupees(st_["Unrealised P&L"]),
-         "open positions, marked to market"
-         + (f" · dividends {rupees(st_['Dividends'])}" if st_.get("Dividends") else ""),
-         tone_of(st_["Unrealised P&L"])),
-    ])
-    tiles_row([
-        ("Overall ROI", f"{st_['ROI %']:+,.2f}%" if np.isfinite(st_["ROI %"]) else "—",
-         f"on {rupees(st_['Capital'])}", tone_of(st_["ROI %"])),
-        ("Win rate", f"{st_['Win rate %']:,.0f}%" if np.isfinite(st_["Win rate %"]) else "—",
-         f"{st_['Wins']}W / {st_['Losses']}L on closed trades", ""),
-        # a book with no losing trade yet has an infinite factor, which is a real
-        # statement about it — not a missing number
-        ("Profit factor",
-         "∞" if st_["Profit factor"] == np.inf else _safe_ratio(st_["Profit factor"]),
-         "gross win / gross loss", ""),
-        ("Max drawdown",
-         f"{st_['Max drawdown %']:+,.2f}%" if np.isfinite(st_["Max drawdown %"]) else "—",
-         "peak-to-trough of daily equity + live mark" if np.isfinite(st_["Max drawdown %"])
-         else "needs prices", "neg"),
-    ])
-
+    t = ch.theme()
+    sk = js.streaks(rt) if len(rt) else None
+    bm = js.best_month(rt) if len(rt) else None
+    net_after = st_["Net P&L"] - charges
+    wr = st_["Win rate %"]
+    pf = st_["Profit factor"]
+    mdd = st_["Max drawdown %"]
     age = st_.get("Book age (years)", np.nan)
     # Brokers (Zerodha Console etc.) annualise with
     # (end/start)^(365.25/days) − 1 once the book is ~a quarter old.
@@ -4626,255 +4856,320 @@ def tab_journal(s: dict) -> None:
     if cagr_ready:
         cagr_sub = f"annualised · {age * 12:,.1f} months"
     elif np.isfinite(age) and age < 90 / 365.25:
-        days_so_far = int(round(age * 365.25))
-        cagr_sub = f"after 3 months ({days_so_far}d so far)"
+        cagr_sub = f"after 3 months ({int(round(age * 365.25))}d so far)"
     else:
         cagr_sub = "needs prices"
+
+    # ---- the five numbers that matter, then everything else in one strip --- #
     tiles_row([
-        ("CAGR", f"{st_['CAGR %']:,.1f}%" if cagr_ready else "—",
-         cagr_sub,
+        ("Net P&L", _signed_rupees(net_after),
+         (f"gross {_signed_rupees(st_['Net P&L'])} − charges {rupees(charges)}" if charges
+          else f"{st_['ROI %']:+,.2f}% on {rupees(st_['Capital'])} · no charges entered")
+         if np.isfinite(st_["ROI %"]) else "", tone_of(net_after),
+         _spark_svg(eq.values, t["good"] if net_after >= 0 else t["critical"]) if len(eq) > 2 else ""),
+        ("Win rate", f"{wr:,.0f}%" if np.isfinite(wr) else "—",
+         f"{st_['Wins']}W / {st_['Losses']}L closed", "",
+         _ring_svg(wr, t["good"], f"{wr:,.0f}%") if np.isfinite(wr) else ""),
+        # a book with no losing trade yet has an infinite factor, which is a real
+        # statement about it — not a missing number
+        ("Profit factor", "∞" if pf == np.inf else _safe_ratio(pf), "gross win ÷ gross loss", "",
+         _ring_svg(100 if pf == np.inf else min(pf / 3 * 100, 100), t["accent"],
+                   "∞" if pf == np.inf else f"{pf:,.1f}x") if np.isfinite(pf) or pf == np.inf else ""),
+        ("Max drawdown", f"{mdd:+,.2f}%" if np.isfinite(mdd) else "—",
+         "peak → trough, daily" if np.isfinite(mdd) else "needs prices", "neg",
+         _ring_svg(min(abs(mdd) * 4, 100), t["critical"], f"{mdd:,.1f}%") if np.isfinite(mdd) else ""),
+        ("CAGR", f"{st_['CAGR %']:,.1f}%" if cagr_ready else "—", cagr_sub,
          tone_of(st_.get("CAGR %", 0)) if cagr_ready else ""),
+    ])
+    strip = [
+        ("Gross P&L", _signed_rupees(st_["Net P&L"]), "before charges", tone_of(st_["Net P&L"])),
+        ("Realised", _signed_rupees(st_["Realised P&L"]), "booked exits", tone_of(st_["Realised P&L"])),
+        ("Unrealised", _signed_rupees(st_["Unrealised P&L"]),
+         "open, marked to market" + (f" · div {rupees(st_['Dividends'])}" if st_.get("Dividends") else ""),
+         tone_of(st_["Unrealised P&L"])),
         ("Expectancy", rupees(st_["Expectancy ₹"]) if np.isfinite(st_["Expectancy ₹"]) else "—",
          f"{st_['Expectancy %']:,.1f}% per trade" if np.isfinite(st_["Expectancy %"]) else "",
          tone_of(st_["Expectancy ₹"])),
-        ("Avg win / avg loss",
-         (f"{st_['Avg win %']:,.1f}% / {st_['Avg loss %']:,.1f}%"
-          if np.isfinite(st_["Avg win %"]) and np.isfinite(st_["Avg loss %"]) else "—"),
-         f"risk-reward {_safe_ratio(st_['Risk-reward'])}", ""),
         ("Trades closed", f"{st_['Trades closed']}",
-         (f"avg {st_['Avg days held']/7:,.1f} weeks held"
-          if np.isfinite(st_["Avg days held"]) else ""), ""),
-        ("Calmar", _safe_ratio(st_.get("Calmar", np.nan)), "CAGR / max drawdown", ""),
-    ])
-    if len(rt):
-        bm = js.best_month(rt)
-        sk = js.streaks(rt)
-        tiles_row([
-            ("Best month", bm["month"] if bm else "—",
-             (rupees(bm["pnl"]) if bm else ""), "pos" if bm and bm["pnl"] > 0 else ""),
-            ("Max winning streak", str(sk["max win streak"]),
-             "closed trades in a row", "pos"),
-            ("Max losing streak", str(sk["max loss streak"]),
-             "closed trades in a row", "neg"),
-            ("Win streak now", str(sk["win streak"]), "", ""),
-        ])
+         f"avg {st_['Avg days held'] / 7:,.1f} weeks held" if np.isfinite(st_["Avg days held"]) else "", ""),
+        ("Calmar", _safe_ratio(st_.get("Calmar", np.nan)), "CAGR ÷ max drawdown", ""),
+        ("Best month", bm["month"] if bm else "—", rupees(bm["pnl"]) if bm else "",
+         "pos" if bm and bm["pnl"] > 0 else ""),
+    ]
+    if sk:
+        strip.append(("Streaks", f'{sk["max win streak"]}W · {sk["max loss streak"]}L',
+                      f'now {sk["win streak"]} win{"s" if sk["win streak"] != 1 else ""} in a row', ""))
+    stat_strip(strip)
     # after the whole KPI block, not inside it — and folded away until needed
     charges_ui(book, rt)
 
     if close is None:
-        st.caption("**Drawdown, CAGR, Calmar, the equity curve and the year / month tables "
+        st.caption("**Drawdown, CAGR, Calmar, the equity curve and the month-by-month returns "
                    "need prices** — a drawdown happens in the weeks when nothing is filled, "
                    "so a list of fills cannot see it. Switch the toggle above on.")
 
+    flows = js.cashflow_series(book)
+    cap0 = float(book.capital)
+
+    # ---- equity curve + trade quality ------------------------------------- #
+    if len(eq) > 2 or len(rt):
+        g1, g2 = st.columns([2.1, 1])
+        with g1:
+            with card("Equity curve", "Daily close · compare against the indices with "
+                                      "'vs indices'"):
+                if len(eq) > 2:
+                    mode = st.radio("Equity curve", ["₹ rupees", "% from start", "vs indices"],
+                                    horizontal=True, key="eq_mode", label_visibility="collapsed")
+                    if mode == "vs indices":
+                        series = {"Your book": eq}
+                        start_d = str((eq.index[0] - pd.Timedelta(days=7)).date())
+                        end_d = str((eq.index[-1] + pd.Timedelta(days=1)).date())
+                        missing = []
+                        for name in ("Nifty 50", "Nifty 500", "Nifty Midcap 150", "Nifty Smallcap 250"):
+                            ser, used, _tried = load_benchmark(
+                                tuple(uni_mod.BENCHMARK_CANDIDATES[name]), start_d, end_d, s["demo"])
+                            if ser is not None and len(ser) > 2:
+                                series[name] = ser
+                            else:
+                                missing.append(name)
+                        rel = js.relative_returns(series, start=eq.index[0])
+                        if rel.shape[1] > 1:
+                            show_chart(equity_vs_index_figure(rel, "Your book"))
+                            last = rel.ffill().iloc[-1]
+                            st.caption("Since your first fill: " + " · ".join(
+                                f"**{k}** {v:+.1f}%" for k, v in last.items()))
+                        else:
+                            show_chart(equity_figure(eq, None, pct=True))
+                        if missing:
+                            st.caption("No index data for " + ", ".join(missing) + " right now.")
+                    else:
+                        show_chart(equity_figure(eq, None, pct=mode.startswith("%")))
+                else:
+                    st.caption("Needs prices — switch on 'Load prices for the full analysis'.")
+        with g2:
+            with card("Trade quality", "closed trades, % return per trade"):
+                st.markdown(trade_quality_html(st_, rt, sk), unsafe_allow_html=True)
+
+    # ---- cumulative P&L as weekly candles ----------------------------------- #
+    cnd = js.weekly_pnl_candles(eq, cap0, flows) if len(eq) > 2 else pd.DataFrame()
+    if len(cnd) >= 2:
+        with card("Cumulative P&L — weekly candles",
+                  "Total P&L = booked + open positions at the close. One candle per Friday week: "
+                  "green = the week added to it, red = the week took from it"):
+            show_chart(pnl_candles_figure(cnd))
+            up, dn = int((cnd["change"] > 0).sum()), int((cnd["change"] < 0).sum())
+            st.caption(f"**{up}** green weeks · **{dn}** red weeks · best week "
+                       f"**{_signed_rupees(cnd['change'].max())}** · worst week "
+                       f"**{_signed_rupees(cnd['change'].min())}**")
+
+    # ---- weekly booked P&L + drawdown --------------------------------------- #
+    if len(rt) or len(eq) > 2:
+        g1, g2 = st.columns(2)
+        with g1:
+            if len(rt):
+                with card("Weekly gain / loss", "booked P&L per Friday week"):
+                    show_chart(booked_week_figure(rt))
+        with g2:
+            if len(eq) > 2:
+                with card("Max drawdown", "how far below its last peak the book was, every day"):
+                    show_chart(drawdown_figure(eq))
+
+    # ---- monthly returns, factsheet style ---------------------------------- #
+    grid, basis = js.monthly_return_grid(eq if len(eq) > 2 else None, cap0, flows, rt)
+    if not grid.empty:
+        with card("Monthly returns",
+                  ("% return each month on the equity curve — open positions marked to market, "
+                   "deposits taken out. Year = the months compounded."
+                   if basis == "equity" else
+                   "% of book capital booked each month (load prices to include open positions)")):
+            st.markdown(returns_grid_html(grid), unsafe_allow_html=True)
+            show_chart(monthly_return_bars(grid))
+            with st.expander("Detailed tables — month, year, week"):
+                tabs_ = ["Month (trades)", "Year (trades)"]
+                if len(eq) > 2:
+                    tabs_ += ["Month (equity)", "Year (equity)", "Week (equity)"]
+                tt = st.tabs(tabs_)
+                with tt[0]:
+                    mt = js.monthly_trade_table(rt) if len(rt) else pd.DataFrame()
+                    if not mt.empty:
+                        show_money_df(mt, money_cols=("P&L ₹", "Capital"),
+                                      pct_cols=("Win %", "P&L %", "Avg gain", "Avg loss", "Best", "Worst"))
+                with tt[1]:
+                    yt = js.yearly_trade_table(rt) if len(rt) else pd.DataFrame()
+                    if not yt.empty:
+                        show_money_df(yt, money_cols=("P&L ₹", "Capital"),
+                                      pct_cols=("Win %", "P&L %", "Avg gain", "Avg loss"))
+                if len(eq) > 2:
+                    with tt[2]:
+                        st.markdown(period_table_html(js.monthly(eq, capital=cap0, flows=flows), "month"),
+                                    unsafe_allow_html=True)
+                    with tt[3]:
+                        st.markdown(period_table_html(js.yearly(eq, capital=cap0, flows=flows), "year"),
+                                    unsafe_allow_html=True)
+                    with tt[4]:
+                        st.markdown(period_table_html(js.weekly(eq, capital=cap0, flows=flows), "week"),
+                                    unsafe_allow_html=True)
+
+    # ---- calendar (one month) + exit reasons --------------------------------- #
     if book.ledger:
-        filled_years = {pd.Timestamp(r.get("date")).year for r in book.ledger if r.get("date")}
-        this_year = data_mod.today_ist().year
-        start_y = min(filled_years | {this_year, 2026})
-        end_y = max(this_year + 10, max(filled_years) if filled_years else this_year)
-        years = list(range(int(start_y), int(end_y) + 1))
-        prefs_path = os.path.join(APP_DIR, "ui_prefs.json")
-        saved_year = None
-        try:
-            with open(prefs_path, encoding="utf-8") as f:
-                saved_year = json.load(f).get("calendar_year")
-        except Exception:
-            saved_year = st.session_state.get("cal_year")
-        default_year = int(saved_year) if saved_year in years else (
-            this_year if this_year in years else years[-1])
-        year = st.selectbox("Calendar year", years,
-                            index=years.index(default_year),
-                            key="cal_year",
-                            help="Empty years stay empty until you trade in them. "
-                                 "Last choice is remembered.")
-        try:
-            blob = {}
-            if os.path.exists(prefs_path):
-                with open(prefs_path, encoding="utf-8") as f:
-                    blob = json.load(f) or {}
-            if blob.get("calendar_year") != year:
-                blob["calendar_year"] = int(year)
-                with open(prefs_path, "w", encoding="utf-8") as f:
-                    json.dump(blob, f)
-        except Exception:
-            pass
-        bm = js.best_month(rt) if len(rt) else None
-        last_eq = float(st_["Portfolio value"]) if np.isfinite(st_.get("Portfolio value", np.nan)) else (
-            float(eq.iloc[-1]) if len(eq) else book.capital)
-        ytd = (last_eq / float(book.capital) - 1) * 100 if book.capital else np.nan
-        kpis = [
-            ("Starting capital", rupees(book.capital), "book capital", ""),
-            ("Final capital", rupees(last_eq),
-             f"Net P&L {rupees(st_['Net P&L'])}", tone_of(st_["Net P&L"])),
-            ("YTD return",
-             f"{ytd:+.2f}%" if np.isfinite(ytd) else "—",
-             "vs starting capital", tone_of(ytd if np.isfinite(ytd) else 0)),
-            ("Total trades", f"{st_['Trades closed']}",
-             f"{st_['Wins']}W / {st_['Losses']}L", ""),
-            ("Win rate",
-             f"{st_['Win rate %']:,.1f}%" if np.isfinite(st_["Win rate %"]) else "—",
-             "closed trades", ""),
-            ("Avg R:R", _safe_ratio(st_.get("Risk-reward", np.nan)),
-             "among closed trades", ""),
-            ("Best month", bm["month"] if bm else "—",
-             rupees(bm["pnl"]) if bm else "", "pos" if bm and bm["pnl"] > 0 else ""),
-        ]
-        st.markdown(trading_calendar_html(book, int(year), kpis), unsafe_allow_html=True)
+        g1, g2 = st.columns([1.6, 1])
+        with g1:
+            with card("Trading calendar"):
+                days = pd.to_datetime(pd.Series([r.get("date") for r in book.ledger if r.get("date")]))
+                first = days.min().to_period("M") if len(days) else pd.Period(data_mod.today_ist(), "M")
+                last_m = max(days.max().to_period("M"), pd.Period(data_mod.today_ist(), "M")) \
+                    if len(days) else first
+                months_ = [str(p) for p in pd.period_range(first, last_m, freq="M")][::-1]
+                # open on the latest month that actually has an exit in it
+                sells = [r.get("date") for r in book.ledger
+                         if str(r.get("side", "")).upper() == "SELL" and r.get("date")]
+                last_sell = str(pd.Timestamp(max(sells)).to_period("M")) if sells else months_[0]
+                pick = st.selectbox("Month", months_,
+                                    index=months_.index(last_sell) if last_sell in months_ else 0,
+                                    key="cal_month",
+                                    format_func=lambda m: pd.Period(m, "M").strftime("%B %Y"),
+                                    label_visibility="collapsed")
+                pm = pd.Period(pick, "M")
+                st.markdown(month_calendar_html(book, pm.year, pm.month), unsafe_allow_html=True)
+        with g2:
+            with card("P&L by exit reason", "which rung of the ladder made the money"):
+                if not rb.empty:
+                    col = "P&L" if "P&L" in rb.columns else rb.columns[-1]
+                    labels = rb.index.astype(str) if not isinstance(rb.index, pd.RangeIndex) \
+                        else rb.iloc[:, 0].astype(str)
+                    show_chart(hbar_figure(labels, rb[col]))
+                    with st.expander("Table"):
+                        show_df(rb)
+                else:
+                    st.caption("Nothing sold yet.")
 
-    # ---- equity curve and drawdown --------------------------------------- #
-    if len(eq) > 2:
-        with card("Equity & drawdown", "Daily close. ₹ zooms to rupees; % is return from day one."):
-            mode = st.radio("Equity curve", ["₹ rupees", "% from start"],
-                             horizontal=True, key="eq_mode")
-            g1, g2 = st.columns([1.7, 1])
-            with g1:
-                show_chart(equity_figure(eq, None, pct=mode.startswith("%")))
-            with g2:
-                show_chart(drawdown_figure(eq))
-                if len(rt):
-                    show_chart(weekly_pnl_figure(rt))
+    # ---- how far trades ran + P&L by stock --------------------------------- #
+    mfe = js.mfe_report(rt, close) if len(rt) else {"summary": pd.DataFrame(), "detail": pd.DataFrame()}
+    top = js.pnl_by_stock(rt, 10) if len(rt) else pd.DataFrame()
+    if not mfe["summary"].empty or not top.empty:
+        g1, g2 = st.columns(2)
+        with g1:
+            with card("How far closed trades ran",
+                      "highest daily close between entry and exit · each trade counted once"):
+                if not mfe["summary"].empty:
+                    show_chart(mfe_figure(mfe["summary"]))
+                    with st.expander("Table and every trade"):
+                        show_df(mfe["summary"])
+                        st.caption("Every trade is counted **once**, in the band its highest daily "
+                                   "close reached before it was finally exited — whatever rung "
+                                   "actually sold it. A trade that peaked at 220% sits in "
+                                   "**200% – 300%** only, so the rows add up to your closed trades.")
+                        show_df(mfe["detail"])
+                        st.caption("\"Left on the table\" = max gain reached − what you actually "
+                                   "exited at, in percentage points.")
+                else:
+                    st.caption("Needs prices — switch on 'Load prices for the full analysis'.")
+        with g2:
+            with card("P&L by stock — top 10", "booked P&L, every trade in the stock added up"):
+                if not top.empty:
+                    show_chart(hbar_figure(top["symbol"], top["pnl"]))
+                    worst = js.pnl_by_stock(rt, len(rt)).tail(3).iloc[::-1]
+                    worst = worst[worst["pnl"] < 0]
+                    if len(worst):
+                        st.caption("Biggest losers: " + " · ".join(
+                            f"**{r.symbol}** {_signed_rupees(r.pnl)}" for r in worst.itertuples()))
 
-        if len(rt):
-            mt = js.monthly_trade_table(rt)
-            yt = js.yearly_trade_table(rt)
-            with card("Monthly performance"):
-                show_money_df(mt, money_cols=("P&L ₹", "Capital"),
-                              pct_cols=("Win %", "P&L %", "Avg gain", "Avg loss", "Best", "Worst"))
-            with card("Yearly performance"):
-                show_money_df(yt, money_cols=("P&L ₹", "Capital"),
-                              pct_cols=("Win %", "P&L %", "Avg gain", "Avg loss"))
-            if not mt.empty:
-                t = ch.theme()
-                fig = go.Figure(go.Bar(
-                    x=mt["Month"], y=mt["P&L %"],
-                    marker_color=[t["good"] if v >= 0 else t["critical"] for v in mt["P&L %"]],
-                ))
-                ch.style(fig, height=240, ytitle="P&L %")
-                fig.update_layout(showlegend=False)
-                st.markdown("##### P&L vs month")
-                show_chart(fig)
-
-        with card("Equity by period", "Full width — year, month or week. No sideways scroll."):
-            ydf = js.yearly(eq, capital=float(book.capital), flows=js.cashflow_series(book))
-            mdf = js.monthly(eq, capital=float(book.capital), flows=js.cashflow_series(book))
-            wdf = js.weekly(eq, capital=float(book.capital), flows=js.cashflow_series(book))
-            t_y, t_m, t_w = st.tabs([
-                f"Year by year ({len(ydf)})",
-                f"Month by month ({len(mdf)})",
-                f"Week by week ({len(wdf)})",
-            ])
-            with t_y:
-                st.markdown(period_table_html(ydf, "year"), unsafe_allow_html=True)
-            with t_m:
-                st.markdown(period_table_html(mdf, "month"), unsafe_allow_html=True)
-            with t_w:
-                st.markdown(period_table_html(wdf, "week"), unsafe_allow_html=True)
-
-    if len(rt):
-        wins = int((rt["P&L"] > 0).sum())
-        losses = int((rt["P&L"] <= 0).sum())
-        wr = st_["Win rate %"] if np.isfinite(st_["Win rate %"]) else 0
-        rr = st_.get("Risk-reward", np.nan)
-        t = ch.theme()
-        v1, v2 = st.columns(2)
-        with v1:
-            with card("Strike rate"):
-                show_chart(donut_figure(
-                    "Strike rate",
-                    ["Winners", "Losers"],
-                    [max(wins, 0), max(losses, 0)],
-                    [t["good"], t["critical"]],
-                    f"{wr:,.0f}%" if np.isfinite(wr) else "—",
-                ))
-        with v2:
-            aw = abs(float(st_.get("Avg win %") or 0))
-            al = abs(float(st_.get("Avg loss %") or 0))
-            if not np.isfinite(aw):
-                aw = 0
-            if not np.isfinite(al):
-                al = 0
-            with card("Risk : Reward"):
-                show_chart(donut_figure(
-                    "Risk : Reward",
-                    ["Avg win %", "Avg loss %"],
-                    [aw or 0.01, al or 0.01],
-                    [t["good"], t["series"][3]],
-                    f"1 : {_safe_ratio(rr)}" if np.isfinite(rr) else "—",
-                ))
-
-    # ---- where the money came from --------------------------------------- #
-    with card("P&L by exit reason"):
-        st.caption("Profit targets, the 20 EMA break, the 50 EMA break — what each rung actually "
-                   "paid.")
-        if not rb.empty:
-            show_chart(exit_reason_figure(rb))
-            show_df(rb)
-
-    pb = js.partial_booking(rt)
-    if not pb.empty:
-        st.markdown("##### Did booking a target help?")
-        show_df(pb)
-        st.caption("Not a controlled experiment — a trade books a target *because* it went up. "
-                   "Read it as a description of the two populations, not proof of cause.")
-
-    # ---- how far did it actually run, before you got out ------------------ #
-    if len(rt):
-        mfe = js.mfe_report(rt, close)
-        if not mfe["summary"].empty:
-            with card("How far closed trades ran before exit",
-                      "Highest daily close reached between entry and exit, vs what you actually "
-                      "booked — needs 'Load prices for the full analysis' above"):
-                show_df(mfe["summary"])
-                st.caption("Every trade is counted **once**, in the band its highest "
-                           "daily close reached before it was finally exited — whatever rung "
-                           "actually sold it. A trade that peaked at 220% sits in "
-                           "**200% – 300%** only, so the rows add up to your closed trades. "
-                           "**Never above entry** — the close never got over the buy price. "
-                           "**Up, but under 20%** — it went green but never ran.")
-                with st.expander("Every closed trade"):
-                    show_df(mfe["detail"])
-                    st.caption("\"Left on the table\" = max gain reached − what you actually "
-                               "exited at, in percentage points. A big number here is the exit "
-                               "rule giving back a move that genuinely happened, not a missed "
-                               "trade.")
-
-    # ---- index buckets ---------------------------------------------------- #
+    # ---- which end of the market pays ---------------------------------------- #
     if len(rt):
         syms = tuple(sorted(set(rt["symbol"]) | book.open_symbols()))
         bmap, ix_notes = load_index_buckets(syms, s["demo"])
         bi = js.by_index(rt, bmap, order=ix_mod.bucket_order(bmap.values()))
         if not bi.empty:
-            st.markdown("##### Which end of the market pays")
-            show_df(bi)
-            st.caption("NSE's own size bands. **Drawdown ₹** is the deepest fall in that "
-                       "bucket's own cumulative P&L, trade by trade — portfolio drawdown "
-                       "cannot be split across buckets because the cash is shared. "
-                       "**Buckets are today's lists**: NSE does not publish historical "
-                       "membership, and a winner is exactly the stock most likely to have "
-                       "moved up a band since you bought it, which flatters the larger ones.")
+            with card("Which end of the market pays", "average return per trade, by NSE size band"):
+                show_chart(hbar_figure(bi["Index bucket"], bi["Avg return %"], money=False))
+                with st.expander("Table"):
+                    show_df(bi)
+                    st.caption("NSE's own size bands. **Drawdown ₹** is the deepest fall in that "
+                               "bucket's own cumulative P&L, trade by trade. **Buckets are today's "
+                               "lists**: NSE does not publish historical membership, and a winner "
+                               "is exactly the stock most likely to have moved up a band since you "
+                               "bought it, which flatters the larger ones.")
 
-    # ---- best and worst --------------------------------------------------- #
-    if len(rt) >= 2:
-        best, worst = js.top_movers(rt, 10)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("##### Best trades")
-            show_df(best)
-        with c2:
-            st.markdown("##### Worst trades")
-            show_df(worst)
-        ch_ = js.characteristics(rt)
-        if not ch_.empty:
-            st.markdown("##### What the winners had in common")
-            show_df(ch_)
+    # ---- one trade, on its chart ------------------------------------------- #
+    all_pos = list(book.positions) + list(book.closed)
+    if all_pos and close is not None:
+        with card("Trade detail", "Pick any trade — weekly candles with entry, stop, targets, "
+                                  "EMA trail and every fill"):
+            all_pos.sort(key=lambda p: pd.Timestamp(p.entry_date), reverse=True)
+            labels_ = [f"{p.symbol} · {pd.Timestamp(p.entry_date):%d %b %Y} · "
+                       f"{'open' if p.is_open() else 'closed'}" for p in all_pos]
+            i = st.selectbox("Trade", range(len(all_pos)), format_func=lambda k: labels_[k],
+                             key="jr_trade", label_visibility="collapsed")
+            pos = all_pos[i]
+            px = pd.DataFrame()
+            if hist is not None and pos.symbol in close.columns:
+                raw = close[pos.symbol]
+                adj = hist.get("Close", pd.DataFrame()).get(pos.symbol)
+                ratio = (raw / adj).replace([np.inf, -np.inf], np.nan).ffill().bfill() \
+                    if adj is not None else 1.0
+                px = pd.DataFrame({k: (hist[k][pos.symbol] * ratio if k in hist and pos.symbol in hist[k]
+                                       else raw) for k in ("Open", "High", "Low")})
+                px["Close"] = raw
+                px = px.dropna()
+                px.index = pd.DatetimeIndex(px.index)
+            fills = pd.DataFrame([r for r in book.ledger if r.get("symbol") == pos.symbol
+                                  and str(r.get("entry_date") or r.get("date"))[:10]
+                                  == str(pd.Timestamp(pos.entry_date).date())])
+            last_px = float(px["Close"].iloc[-1]) if len(px) else np.nan
+            booked = float(pd.to_numeric(fills["pnl"], errors="coerce").fillna(0).sum()) \
+                if not fills.empty and "pnl" in fills else 0.0
+            gain = (last_px / float(pos.entry_price) - 1) * 100 if np.isfinite(last_px) else np.nan
+            stat_strip([
+                ("Entry", f"₹{float(pos.entry_price):,.2f}",
+                 f"{pd.Timestamp(pos.entry_date):%d %b %Y} · {pos.qty} shares", ""),
+                ("Now" if pos.is_open() else "Last close",
+                 f"₹{last_px:,.2f}" if np.isfinite(last_px) else "—",
+                 f"{gain:+.1f}% from entry" if np.isfinite(gain) else "",
+                 tone_of(gain if np.isfinite(gain) else 0)),
+                ("Booked", _signed_rupees(booked), f"{pos.qty - pos.open_qty} of {pos.qty} sold",
+                 tone_of(booked)),
+                ("Still held", f"{pos.open_qty}", "shares" if pos.is_open() else "closed", ""),
+            ])
+            if len(px) > 5:
+                show_chart(trade_figure(px, pos, s.get("ladder"), fills,
+                                        s["breakout"].ema_fast, s["breakout"].ema_slow))
+            else:
+                st.caption("No price history for this stock.")
+            if not fills.empty:
+                st.markdown(saas_fills_html(jn.ledger_frame(book).loc[
+                    lambda d: (d["symbol"] == pos.symbol)
+                    & (pd.to_datetime(d["date"]) >= pd.Timestamp(pos.entry_date))]),
+                    unsafe_allow_html=True)
 
+    pb = js.partial_booking(rt)
     slip = js.slippage_report(book)
-    if not slip.empty:
-        with st.expander(f"Slippage — buy list vs actual fill ({len(slip)} entries)"):
-            show_df(slip)
-            st.caption(f"Average **{slip['slippage %'].mean():+.2f}%**, total "
-                       f"**{rupees(slip['slippage ₹'].sum())}**. "
-                       "**Positive = you filled better than Friday’s close** "
-                       "(paid less on a buy). ANTELOPUS 1006.55 → 942.27 is a plus, not a minus.")
+    if len(rt) >= 2 or not pb.empty or not slip.empty:
+        with st.expander("More trade tables — best & worst, winners' traits, partial booking, slippage"):
+            if len(rt) >= 2:
+                best, worst = js.top_movers(rt, 10)
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("##### Best trades")
+                    show_df(best)
+                with c2:
+                    st.markdown("##### Worst trades")
+                    show_df(worst)
+                ch_ = js.characteristics(rt)
+                if not ch_.empty:
+                    st.markdown("##### What the winners had in common")
+                    show_df(ch_)
+            if not pb.empty:
+                st.markdown("##### Did booking a target help?")
+                show_df(pb)
+                st.caption("Not a controlled experiment — a trade books a target *because* it went "
+                           "up. Read it as a description of the two populations, not proof of cause.")
+            if not slip.empty:
+                st.markdown(f"##### Slippage — buy list vs actual fill ({len(slip)} entries)")
+                show_df(slip)
+                st.caption(f"Average **{slip['slippage %'].mean():+.2f}%**, total "
+                           f"**{rupees(slip['slippage ₹'].sum())}**. "
+                           "**Positive = you filled better than Friday’s close** "
+                           "(paid less on a buy).")
 
     if len(rt):
         with st.expander(f"Every closed trade ({len(rt)})"):
