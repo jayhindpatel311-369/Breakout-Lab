@@ -615,6 +615,17 @@ def inject_css() -> None:
                     line-height: 0; }
         .tile-value, .cal-kpi .v { overflow-wrap: anywhere; }
 
+        .lp { height: 5px; border-radius: 4px; background: var(--divider); margin-top: 6px;
+              overflow: hidden; max-width: 180px; }
+        .lp-f { height: 5px; border-radius: 4px; }
+        .lp-f.pos { background: var(--pos); } .lp-f.neg { background: var(--neg); }
+        .rs-cell { display:flex; align-items:center; gap:8px; }
+        .rs-track { display:inline-block; width:64px; height:6px; border-radius:6px;
+                    background: var(--divider); overflow:hidden; }
+        .rs-track span { display:block; height:6px; border-radius:6px; background: var(--accent); }
+        .ix-pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11.5px;
+                   font-weight:600; background: var(--accent-soft); color: var(--accent);
+                   white-space: nowrap; }
         /* trade quality bars */
         .tq-row { margin: 4px 0 14px; }
         .tq-top { display:flex; justify-content:space-between; font-size:13.5px; font-weight:600;
@@ -1281,6 +1292,47 @@ def _tone_cls(v) -> str:
     return "pos" if v > 0 else "neg"
 
 
+def _ladder_bar(r) -> str:
+    """How far along the way to the next booking (green), or towards the stop (red)."""
+    prog = r.get("_prog")
+    if prog is None or not np.isfinite(prog):
+        return ""
+    cls = "pos" if prog >= 0 else "neg"
+    w = max(4.0, min(100.0, abs(float(prog)) * 100))
+    return f'<div class="lp" title="{abs(prog) * 100:.0f}%"><div class="lp-f {cls}" style="width:{w:.0f}%"></div></div>'
+
+
+def ladder_progress(book: jn.Book, hold: pd.DataFrame, ladder) -> pd.DataFrame:
+    """Adds `_prog`: share of the way from entry to the next profit target
+    (0..1), or, for a trade under water, minus the share of the way to its stop."""
+    if hold is None or hold.empty:
+        return hold
+    out = hold.copy()
+    prog = []
+    for _, r in out.iterrows():
+        pos = book.find(str(r.get("symbol")))
+        g = r.get("gain_%")
+        v = np.nan
+        if pos is not None and g is not None and np.isfinite(g):
+            if g >= 0:
+                nxt = [x for x in (ladder or []) if getattr(x, "trigger", "") == "gain_pct"
+                       and (x.book_pct or x.trail_to) and x.key not in (pos.done or [])]
+                if nxt:
+                    v = min(1.0, float(g) / max(float(nxt[0].value), 1e-9))
+                else:
+                    v = 1.0
+            else:
+                stop = r.get("live_stop")
+                if stop is None or not np.isfinite(stop or np.nan):
+                    stop = r.get("20 EMA")
+                e = float(pos.entry_price)
+                if stop is not None and np.isfinite(stop) and e > float(stop):
+                    v = -min(1.0, (e - float(r.get("last_price") or e)) / (e - float(stop)))
+        prog.append(v)
+    out["_prog"] = prog
+    return out
+
+
 def saas_hold_html(df: pd.DataFrame, capital: float | None = None,
                    risk_total: float | None = None) -> str:
     """Option-1 SaaS positions table — not a Streamlit dataframe."""
@@ -1341,7 +1393,7 @@ def saas_hold_html(df: pd.DataFrame, capital: float | None = None,
             + _td("Unrealised", _signed_rupees(pnl), f"num {_tone_cls(pnl)}")
             + _td("P&L %", pct_s, f"num {_tone_cls(pct)}")
             + _td("Open risk", risk_s, "num")
-            + _td("Next", f'<div class="saas-next">{_esc(nxt)}</div>')
+            + _td("Next", f'<div class="saas-next">{_esc(nxt)}</div>{_ladder_bar(r)}')
             + "</tr>"
         )
         compact_rows.append(
@@ -3457,6 +3509,94 @@ def weekly_equity(eq: pd.Series) -> pd.Series:
         return eq
 
 
+def donut_figure(labels, values, colors=None, center: str = "", height: int = 290) -> go.Figure:
+    """Share of a whole — sectors, index bands. Legend on the side, total in the hole."""
+    t = ch.theme()
+    pal = colors or (t["series"] * 3)[:len(list(labels))]
+    fig = go.Figure(go.Pie(
+        labels=list(labels), values=list(values), hole=0.66, sort=False,
+        marker=dict(colors=pal, line=dict(color=t["surface"], width=2)),
+        textinfo="none", hovertemplate="%{label}<br>%{value:,.0f} · %{percent}<extra></extra>"))
+    ch.style(fig, height=height, hover="closest")
+    # legend under the ring, not beside it — beside it squeezed the ring to a
+    # dot on a phone
+    fig.update_layout(showlegend=True, margin=dict(l=8, r=8, t=8, b=8),
+                      legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.04, yanchor="top",
+                                  font=dict(size=11.5)),
+                      annotations=[dict(text=center, x=0.5, y=0.5, showarrow=False,
+                                        font=dict(size=15, color=t["text"], family=ch.FONT))])
+    return fig
+
+
+def line_figure(series: pd.Series, height: int = 250, colour: str | None = None,
+                lakhs: bool = True) -> go.Figure:
+    t = ch.theme()
+    y = series.astype(float) / (1e5 if lakhs else 1.0)
+    c = colour or t["accent"]
+    fig = go.Figure(go.Scatter(x=series.index, y=y, mode="lines", line=dict(color=c, width=2),
+                               fill="tozeroy", fillcolor="rgba(43,89,195,0.07)",
+                               hovertemplate="%{x|%d %b}<br>₹%{y:,.2f}" + (" L" if lakhs else "")
+                               + "<extra></extra>"))
+    lo, hi = float(y.min()), float(y.max())
+    pad = (hi - lo) * 0.25 or abs(hi) * 0.01 or 1
+    ch.style(fig, height=height)
+    fig.update_yaxes(range=[lo - pad, hi + pad], tickprefix="₹", ticksuffix=" L" if lakhs else "",
+                     tickformat=",.2f" if lakhs else ",.0f")
+    fig.update_layout(showlegend=False)
+    return fig
+
+
+def count_bars_figure(series: pd.Series, height: int = 230, ytitle: str = "") -> go.Figure:
+    t = ch.theme()
+    fig = go.Figure(go.Bar(x=series.index, y=series.values, marker_color=t["accent"],
+                           hovertemplate="%{x|%d %b %Y}<br>%{y}<extra></extra>"))
+    ch.style(fig, height=height, ytitle=ytitle)
+    fig.update_layout(showlegend=False, bargap=0.3)
+    return fig
+
+
+def buylist_html(plan: pd.DataFrame) -> str:
+    """The ranked list, read at a glance: who, where, how strong, how much, what risk.
+    Every other column stays one click away in the full table."""
+    if plan is None or plan.empty:
+        return '<div class="ptable-empty">Nothing to buy this week.</div>'
+    heads = [("#", ""), ("Stock", ""), ("Index", ""), ("CMP", "num"), ("RS", ""),
+             ("Vol surge", "num"), ("Qty", "num"), ("Capital", "num"), ("Stop", "num"),
+             ("Risk", "num")]
+    th = "".join(f'<th class="{c}">{h}</th>' for h, c in heads)
+    rows = []
+    for i, (_, d) in enumerate(plan.iterrows(), start=1):
+        rs = d.get("RS")
+        rs_html = "—"
+        if rs is not None and pd.notna(rs):
+            rs_html = (f'<div class="rs-cell"><b>{int(rs)}</b><span class="rs-track">'
+                       f'<span style="width:{max(0, min(100, int(rs)))}%"></span></span></div>')
+        sub = _esc(d.get("sector") or "")
+        if d.get("history"):
+            sub += f' · {_esc(d["history"])}'
+        stock = (f'<div class="saas-stock">{_avatar(d.get("symbol"))}<div>'
+                 f'<div class="saas-sym">{_esc(d.get("symbol"))}</div>'
+                 f'<div class="saas-sub">{sub}</div></div></div>')
+        cmp_ = d.get("live CMP") if pd.notna(d.get("live CMP")) else d.get("Fri close")
+        vs = d.get("vol surge")
+        stop_away = d.get("stop is away") or ""
+        rows.append(
+            "<tr>" + _td("#", f"<b>{i}</b>")
+            + _td("Stock", stock)
+            + _td("Index", f'<span class="ix-pill">{_esc(d.get("index") or "—")}</span>')
+            + _td("CMP", _px(cmp_), "num")
+            + _td("RS", rs_html)
+            + _td("Vol surge", f"{float(vs):.1f}×" if vs is not None and pd.notna(vs) else "—", "num")
+            + _td("Qty", str(int(d.get("qty") or 0)), "num")
+            + _td("Capital", rupees(d.get("capital")), "num")
+            + _td("Stop", f'{_px(d.get("stop in force"))}<div class="saas-sub">{_esc(stop_away)} away</div>',
+                  "num neg")
+            + _td("Risk", rupees(d.get("risk if stopped")), "num")
+            + "</tr>")
+    return (f'<div class="saas-wrap"><table class="saas-table"><thead><tr>{th}</tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table></div>')
+
+
 # --------------------------------------------------------------------------- #
 # Journal at a glance — small pictures, one job each
 # --------------------------------------------------------------------------- #
@@ -4294,61 +4434,102 @@ def tab_buys(s: dict) -> None:
                                       daily_close=panel["Close"].iloc[-1],
                                       targets_on_daily_close=s.get("targets_on_daily_close",
                                                                    True))
-    action_panel(book, pd.DataFrame() if blocked else plan, pending, week)
-
     total_cost = float(plan["capital"].sum())
     total_risk = float(plan["risk if stopped"].sum())
-    with card("Size this week", "Capital to deploy if you take the ranked list"):
-        tiles_row([
-            ("Imported and priced" if _imported else "Qualified this week",
-             f"{len(cands)}", f"showing top {len(plan)}", ""),
-            ("Capital to deploy", rupees(total_cost),
-             (f"₹{s['sizing'].amount_for(equity):,.0f} per stock"
-              if s["sizing"].mode == "fixed" else ""), ""),
-            ("Total risk if all stop out", rupees(total_risk),
-             f"{total_risk / s['sizing'].capital * 100:,.2f}% of capital", ""),
-            ("Cash in book", rupees(book.cash) if book else "—", "", ""),
-        ])
+    t = ch.theme()
+    risk_pct = total_risk / s["sizing"].capital * 100 if s["sizing"].capital else np.nan
+    # how many names broke out each week lately — breadth of the market at a glance
+    breadth = pd.Series(dtype=float)
+    if not _imported:
+        try:
+            wk_idx = [w for w in sig.fresh.index if w <= week][-26:]
+            breadth = pd.Series({w: len(qualifying_at(sig, w, ctx["screen"].at(w)))
+                                 for w in wk_idx})
+        except Exception:                                      # noqa: BLE001
+            breadth = pd.Series(dtype=float)
+    tiles_row([
+        ("Imported and priced" if _imported else "Qualified this week",
+         f"{len(cands)}", f"showing top {len(plan)}", "",
+         _spark_svg(breadth.values, t["accent"]) if len(breadth) > 3 else ""),
+        ("Capital to deploy", rupees(total_cost),
+         (f"₹{s['sizing'].amount_for(equity):,.0f} per stock"
+          if s["sizing"].mode == "fixed" else f"{len(plan)} stocks"), ""),
+        ("Total risk if all stop out", rupees(total_risk),
+         f"{risk_pct:,.2f}% of capital" if np.isfinite(risk_pct) else "", "neg" if total_risk else "",
+         _ring_svg(min(risk_pct * 10, 100), t["critical"], f"{risk_pct:,.1f}%")
+         if np.isfinite(risk_pct) else ""),
+        ("Market regime", "OFF" if blocked else "ON",
+         "no new entries this week" if blocked else "new entries allowed",
+         "neg" if blocked else "pos",
+         _ring_svg(100, t["critical"] if blocked else t["good"], "OFF" if blocked else "ON")),
+        ("Cash in book", rupees(book.cash) if book else "—", "", ""),
+    ])
+
+    action_panel(book, pd.DataFrame() if blocked else plan, pending, week)
 
     with card("Ranked buy list",
               "qty uses live CMP by default so Friday 2–3pm and Monday both work"):
-        show_df(plan)
+        st.markdown(buylist_html(plan), unsafe_allow_html=True)
+        with st.expander(f"Every column ({plan.shape[1]})"):
+            show_df(plan)
         st.caption("**live CMP** = Yahoo last (what you pay if you buy now). "
                    "**Fri close** = weekly signal close (Chartink 52w high). "
                    "**decision price** is whichever the toggle above is on — qty and stop "
                    "are sized on that. Slippage = your fill minus decision price.")
-    _ixc = plan["index"].value_counts()
-    st.caption("Index bands in this list: "
-               + ", ".join(f"{b} x{int(_ixc[b])}"
-                           for b in ix_mod.bucket_order(plan["index"]) if b in _ixc)
-               + ". Same bands the journal measures returns by, so what you buy and what "
-                 "you later read about it are in the same units. NSE publishes only "
-                 "today's constituent lists, so these are today's.")
+    with st.expander("How this list was made — order, vetoes, bands"):
+        _ixc = plan["index"].value_counts()
+        st.caption("Index bands in this list: "
+                   + ", ".join(f"{b} x{int(_ixc[b])}"
+                               for b in ix_mod.bucket_order(plan["index"]) if b in _ixc)
+                   + ". Same bands the journal measures returns by, so what you buy and what "
+                     "you later read about it are in the same units. NSE publishes only "
+                     "today's constituent lists, so these are today's.")
 
-    n_new = int((plan["history"].astype(str).str.startswith("listed")).sum())
-    if n_new:
-        st.caption(f"**listed Nw** — {n_new} name(s) have been listed for less than "
-                   f"{settled // 5} weeks. They qualify, but the "
-                   f"{s['breakout'].ema_slow}-week EMA that becomes their final stop is "
-                   "still a young average. Nothing is excluded; the number is "
-                   "how many weeks of history they actually have.")
-    st.caption(
-        "**Order:** RS Rating, high to low (ties: delivery %, then volume surge). "
-        "**Vetoes**, never blended into the order: rank floor "
-        f"{s['max_promote_rank']}"
-        + (f", max {s['max_per_sector']} per sector" if s.get("diversify") else "")
-        + (", fundamentals gate (CFO, interest cover, dilution)" if "gate" in scored.columns
-           else " — fundamentals gate is off (switch on Fundamentals analysis)")
-        + ". Strict: a rule is never broken to fill the list.")
-    if "gate" in scored.columns:
-        st.caption("Gate *No data* = not enough statements to check; it passes. "
-                   + fund_mod.GATE_NOT_YET.capitalize() + ".")
-    if s.get("diversify"):
-        st.caption("Sectors in this list: "
-                   + ", ".join(f"{k} x{v}" for k, v in plan["sector"].value_counts().items()))
+        n_new = int((plan["history"].astype(str).str.startswith("listed")).sum())
+        if n_new:
+            st.caption(f"**listed Nw** — {n_new} name(s) have been listed for less than "
+                       f"{settled // 5} weeks. They qualify, but the "
+                       f"{s['breakout'].ema_slow}-week EMA that becomes their final stop is "
+                       "still a young average. Nothing is excluded; the number is "
+                       "how many weeks of history they actually have.")
+        st.caption(
+            "**Order:** RS Rating, high to low (ties: delivery %, then volume surge). "
+            "**Vetoes**, never blended into the order: rank floor "
+            f"{s['max_promote_rank']}"
+            + (f", max {s['max_per_sector']} per sector" if s.get("diversify") else "")
+            + (", fundamentals gate (CFO, interest cover, dilution)" if "gate" in scored.columns
+               else " — fundamentals gate is off (switch on Fundamentals analysis)")
+            + ". Strict: a rule is never broken to fill the list.")
+        if "gate" in scored.columns:
+            st.caption("Gate *No data* = not enough statements to check; it passes. "
+                       + fund_mod.GATE_NOT_YET.capitalize() + ".")
+        if s.get("diversify"):
+            st.caption("Sectors in this list: "
+                       + ", ".join(f"{k} x{v}" for k, v in plan["sector"].value_counts().items()))
     if len(plan) < int(s["entries_per_week"]):
         st.info(f"**{len(plan)} of {int(s['entries_per_week'])}** this week — the rest of the "
                 "candidates were vetoed. The unspent slot(s) stay in cash.")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if len(breadth) > 1:
+            with card("Breakouts per week", "fresh breakouts that passed the screen, last 26 weeks"):
+                show_chart(count_bars_figure(breadth, height=240))
+        else:
+            with card("RS rating of the picks", "relative strength vs the universe, 0–99"):
+                rs_ = plan.dropna(subset=["RS"]) if "RS" in plan.columns else pd.DataFrame()
+                if len(rs_):
+                    show_chart(hbar_figure(rs_["symbol"], rs_["RS"], money=False,
+                                           colour=t["accent"], fmt=lambda v: f"{v:.0f}"))
+    with c2:
+        with card("Sectors in this list", "where this week's money would go"):
+            sec_ = plan.groupby("sector")["capital"].sum().sort_values(ascending=False)
+            show_chart(donut_figure(sec_.index, sec_.values, center=f"{len(plan)} stocks"))
+    with c3:
+        with card("Index bands in this list", "NSE size bands"):
+            ix_ = plan.groupby("index")["capital"].sum()
+            ix_ = ix_.reindex([b for b in ix_mod.bucket_order(ix_.index) if b in ix_.index])
+            show_chart(donut_figure(ix_.index, ix_.values, center=rupees(float(ix_.sum()))))
     _rejected_ui(rejected)
 
     with st.expander(f"All {len(cands)} names "
@@ -4598,17 +4779,25 @@ def tab_positions(s: dict) -> None:
     today_t = _wp("Today P&L", td, "vs previous close (live)", "{} session(s)")
     five_t = _wp("Last 5 days P&L", d5, "5 trading days · live mark", "{} trading day(s) in book")
     # the four numbers you look at first, then everything else in one quiet strip
+    t = ch.theme()
+    tail = eq_pos.dropna().iloc[-40:] if len(eq_pos) else pd.Series(dtype=float)
+    ws = d.get("win share %", np.nan)
     tiles_row([
         ("Portfolio value", rupees(d["portfolio value"]),
-         f"capital {rupees(book.capital)}", ""),
-        today_t,
+         f"capital {rupees(book.capital)}", "",
+         _spark_svg(tail.values, t["accent"]) if len(tail) > 2 else ""),
+        today_t + ((_spark_svg(tail.values[-10:], t["good"] if td["pnl"] >= 0 else t["critical"])
+                    if len(tail) > 3 and np.isfinite(td["pnl"]) else ""),),
         ("Unrealised P&L", rupees(d["unrealised"]),
          f"{d['unrealised %']:+,.2f}% on {rupees(d['cost'])} of cost"
-         if np.isfinite(d["unrealised %"]) else "", tone_of(d["unrealised"])),
+         if np.isfinite(d["unrealised %"]) else "", tone_of(d["unrealised"]),
+         _ring_svg(ws, t["good"], f"{ws:,.0f}%") if np.isfinite(ws) else ""),
         ("Open Risk", rupees(risk_total),
          (f"{risk_pct_cap:,.2f}% of capital ({rupees(cap)})"
           if np.isfinite(risk_pct_cap) else ""),
-         "neg" if risk_total > 0 else ""),
+         "neg" if risk_total > 0 else "",
+         _ring_svg(min(risk_pct_cap * 10, 100), t["critical"], f"{risk_pct_cap:,.1f}%")
+         if np.isfinite(risk_pct_cap) else ""),
     ])
     stat_strip([
         five_t,
@@ -4646,10 +4835,22 @@ def tab_positions(s: dict) -> None:
     st.markdown(take_action_html(pending, week, watch), unsafe_allow_html=True)
 
     wl = js.winners_losers(d["detail"])
-    if not wl.empty:
-        with card("Up / down"):
-            show_money_df(wl, money_cols=("Capital", "Value now", "Unrealised"),
-                          pct_cols=("Avg %",))
+    g = hold[["symbol", "gain_%"]].dropna().sort_values("gain_%", ascending=False) \
+        if hold is not None and not hold.empty else pd.DataFrame()
+    if len(g) or len(tail) > 2:
+        c1, c2 = st.columns(2)
+        with c1:
+            with card("Up / down", f"{d['winners']} up · {d['losers']} down · gain % since entry"):
+                if len(g):
+                    show_chart(hbar_figure(g["symbol"], g["gain_%"], money=False))
+                if not wl.empty:
+                    with st.expander("Up vs down, in rupees"):
+                        show_money_df(wl, money_cols=("Capital", "Value now", "Unrealised"),
+                                      pct_cols=("Avg %",))
+        with c2:
+            if len(tail) > 2:
+                with card("Portfolio, last 40 sessions", "daily mark-to-market, live mark today"):
+                    show_chart(line_figure(tail, height=max(260, 30 * len(g) + 50)))
     movers_ui(book, panel, live, live_date, nse_prev)
 
     open_syms = sorted(book.open_symbols())
@@ -4659,22 +4860,38 @@ def tab_positions(s: dict) -> None:
                else "yesterday’s close — live quote unavailable")
                + (f" · CMP source: {cmp_src}" if cmp_src else "")
                + (f" · {ctx['nse_note']}" if ctx.get("nse_note") else ""))):
-        st.markdown(saas_hold_html(hold, capital=cap, risk_total=risk_total),
-                    unsafe_allow_html=True)
+        st.markdown(saas_hold_html(ladder_progress(book, hold, s["ladder"]), capital=cap,
+                                   risk_total=risk_total), unsafe_allow_html=True)
+        st.caption("Bar under **Next**: green = how far the trade is towards its next "
+                   "booking target, red = how far it has fallen towards its stop.")
 
     c1, c2 = st.columns(2)
     with c1:
-        with card("By sector"):
-            sec = (pd.Series({sym: sectors.get(sym) or "Unknown" for sym in open_syms})
-                   .value_counts().rename_axis("Sector").reset_index(name="Positions"))
-            st.markdown(saas_simple_html(sec), unsafe_allow_html=True)
+        with card("By sector", "share of the money in open positions"):
+            val = hold.set_index("symbol")["open_value"] if hold is not None and not hold.empty \
+                else pd.Series(dtype=float)
+            by_sec = (pd.Series({sym: sectors.get(sym) or "Unknown" for sym in open_syms})
+                      .to_frame("Sector").join(val.rename("Value")))
+            agg = (by_sec.groupby("Sector").agg(Positions=("Value", "size"), Value=("Value", "sum"))
+                   .sort_values("Value", ascending=False))
+            if agg["Value"].fillna(0).sum() > 0:
+                show_chart(donut_figure(agg.index, agg["Value"].fillna(0),
+                                        center=rupees(float(agg["Value"].sum()))))
+            with st.expander("Table"):
+                st.markdown(saas_simple_html(agg.reset_index(), money=("Value",)),
+                            unsafe_allow_html=True)
     with c2:
-        with card("By index"):
+        with card("By index", "NSE size bands"):
             obi = js.open_by_index(book, buckets, last_px, order=ix_mod.bucket_order(buckets.values()))
             view = obi.drop(columns=["Stocks"]) if "Stocks" in obi.columns else obi
-            st.markdown(saas_simple_html(view, money=("Value", "Unrealised"),
-                                          pct=("% of open value",)),
-                        unsafe_allow_html=True)
+            if not obi.empty and "Value" in obi.columns:
+                lab = obi.iloc[:, 0].astype(str)
+                show_chart(donut_figure(lab, obi["Value"].fillna(0),
+                                        center=f"{len(open_syms)} stocks"))
+            with st.expander("Table"):
+                st.markdown(saas_simple_html(view, money=("Value", "Unrealised"),
+                                              pct=("% of open value",)),
+                            unsafe_allow_html=True)
     st.caption("Index buckets are NSE's own size bands, and they are **today's** lists — "
                "NSE does not publish historical membership. " + " · ".join(ix_notes))
 
