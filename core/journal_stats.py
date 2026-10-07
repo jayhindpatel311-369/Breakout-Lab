@@ -975,7 +975,7 @@ def best_month(rt: pd.DataFrame) -> dict | None:
 # --------------------------------------------------------------------------- #
 # how much was left on the table
 # --------------------------------------------------------------------------- #
-_MFE_BANDS = (20, 50, 70, 100, 150, 200, 300, 400, 500)
+_MFE_BANDS = (20, 50, 100, 200, 300, 400, 500)
 
 
 def mfe_report(rt: pd.DataFrame, close: pd.DataFrame | None,
@@ -987,11 +987,10 @@ def mfe_report(rt: pd.DataFrame, close: pd.DataFrame | None,
     something you could have sold at exactly; what you actually booked is
     "exit %". The gap between the two is what the exit rule gave back.
 
-    Returns `detail` (one row per trade) and `summary` — "reached at least
-    X%": a trade that peaked at 220% counts in the 100%, 150% and 200% rows
-    too, same way a high jumper who clears 2.20m cleared 2.00m on the way.
-    That is what answers "how many of my winners had a shot at riding to
-    100/200/400%, whatever I actually exited at".
+    Returns `detail` (one row per trade) and `summary` — one row per band,
+    and every trade sits in exactly ONE row: the band its peak fell in. A
+    trade that peaked at 220% is counted in "200% – 300%" only, so the rows
+    add up to the number of closed trades (the last row is that total).
     """
     empty = {"detail": pd.DataFrame(), "summary": pd.DataFrame()}
     if rt is None or rt.empty:
@@ -1032,17 +1031,21 @@ def mfe_report(rt: pd.DataFrame, close: pd.DataFrame | None,
 
     n = len(detail)
     mfe = detail["max gain reached %"]
-    first = bands[0] if bands else 20
+    bands = tuple(sorted(bands)) or (20,)
 
     def row(label, mask):
         return {"how far it ran": label, "stocks": int(mask.sum()),
                 "% of closed trades": round(float(mask.mean() * 100), 1)}
 
-    # Trades that never got going count too: a list that starts at "20% or more"
-    # leaves the ones that went nowhere — usually most of the losers — out of the
-    # picture entirely, and the rows read as if there were no closed trades.
+    # Exclusive bands. Counting "reached at least X%" put a 220% trade in the
+    # 20, 50, 100 and 200 rows at once, so 50 trades could read as 70+. Trades
+    # that never got going have rows too — they are usually most of the losers.
     rows_ = [row("Never above entry", mfe <= 0),
-             row(f"Up, but under {first}%", (mfe > 0) & (mfe < first))]
-    rows_ += [row(f"Reached at least {b}%", mfe >= b) for b in bands]
+             row(f"Up, but under {bands[0]}%", (mfe > 0) & (mfe < bands[0]))]
+    rows_ += [row(f"{lo}% – {hi}%", (mfe >= lo) & (mfe < hi))
+              for lo, hi in zip(bands, bands[1:])]
+    rows_.append(row(f"{bands[-1]}% or more", mfe >= bands[-1]))
+    rows_.append({"how far it ran": "Total closed trades", "stocks": n,
+                  "% of closed trades": 100.0})
     summary = pd.DataFrame(rows_ if n else [])
     return {"detail": detail, "summary": summary}
