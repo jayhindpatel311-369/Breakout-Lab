@@ -4781,7 +4781,6 @@ def tab_positions(s: dict) -> None:
     # the four numbers you look at first, then everything else in one quiet strip
     t = ch.theme()
     tail = eq_pos.dropna().iloc[-40:] if len(eq_pos) else pd.Series(dtype=float)
-    ws = d.get("win share %", np.nan)
     tiles_row([
         ("Portfolio value", rupees(d["portfolio value"]),
          f"capital {rupees(book.capital)}", "",
@@ -4790,8 +4789,7 @@ def tab_positions(s: dict) -> None:
                     if len(tail) > 3 and np.isfinite(td["pnl"]) else ""),),
         ("Unrealised P&L", rupees(d["unrealised"]),
          f"{d['unrealised %']:+,.2f}% on {rupees(d['cost'])} of cost"
-         if np.isfinite(d["unrealised %"]) else "", tone_of(d["unrealised"]),
-         _ring_svg(ws, t["good"], f"{ws:,.0f}%") if np.isfinite(ws) else ""),
+         if np.isfinite(d["unrealised %"]) else "", tone_of(d["unrealised"])),
         ("Open Risk", rupees(risk_total),
          (f"{risk_pct_cap:,.2f}% of capital ({rupees(cap)})"
           if np.isfinite(risk_pct_cap) else ""),
@@ -4832,6 +4830,8 @@ def tab_positions(s: dict) -> None:
     _stops = split_pending(pending)[1]
     watch = jn.below_fast_ema(book, last_px, ef,
                               skip=set(_stops["symbol"]) if len(_stops) else set())
+    # what moved today first, then what to do about the week
+    movers_ui(book, panel, live, live_date, nse_prev)
     st.markdown(take_action_html(pending, week, watch), unsafe_allow_html=True)
 
     wl = js.winners_losers(d["detail"])
@@ -4840,9 +4840,16 @@ def tab_positions(s: dict) -> None:
     if len(g) or len(tail) > 2:
         c1, c2 = st.columns(2)
         with c1:
-            with card("Up / down", f"{d['winners']} up · {d['losers']} down · gain % since entry"):
-                if len(g):
-                    show_chart(hbar_figure(g["symbol"], g["gain_%"], money=False))
+            # the five best and five worst only — every holding is in the table
+            # below and in the rupee view, and 30 bars made a card taller than the page
+            top_g = g[g["gain_%"] > 0].head(5) if len(g) else g
+            top_l = g[g["gain_%"] <= 0].tail(5) if len(g) else g
+            g5 = pd.concat([top_g, top_l]) if len(g) else g
+            sub_ = (f"{d['winners']} up · {d['losers']} down · top {len(top_g)} up and "
+                    f"bottom {len(top_l)} down, gain % since entry")
+            with card("Up / down", sub_):
+                if len(g5):
+                    show_chart(hbar_figure(g5["symbol"], g5["gain_%"], money=False))
                 if not wl.empty:
                     with st.expander("Up vs down, in rupees"):
                         show_money_df(wl, money_cols=("Capital", "Value now", "Unrealised"),
@@ -4850,8 +4857,7 @@ def tab_positions(s: dict) -> None:
         with c2:
             if len(tail) > 2:
                 with card("Portfolio, last 40 sessions", "daily mark-to-market, live mark today"):
-                    show_chart(line_figure(tail, height=max(260, 30 * len(g) + 50)))
-    movers_ui(book, panel, live, live_date, nse_prev)
+                    show_chart(line_figure(tail, height=max(260, 30 * len(g5) + 50)))
 
     open_syms = sorted(book.open_symbols())
 
