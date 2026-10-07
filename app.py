@@ -4799,8 +4799,11 @@ def tab_positions(s: dict) -> None:
     ])
     stat_strip([
         five_t,
-        ("Capital deployed", rupees(d["deployed"]),
-         f"{d['deployed %']:,.1f}% working · {d['cash %']:,.1f}% cash", ""),
+        # what you PUT IN to the open stocks; what they are worth today is the
+        # second line — same two-line shape as every other box in the strip
+        ("Capital deployed", rupees(d["cost"]),
+         (f"{d['cost'] / cap * 100:,.1f}% of capital · now {rupees(d['deployed'])}"
+          if cap else f"now {rupees(d['deployed'])}"), ""),
         ("Up / down", f"{d['winners']} / {d['losers']}",
          f"{d['win share %']:,.0f}% of {d['positions']} in profit"
          if np.isfinite(d["win share %"]) else "", ""),
