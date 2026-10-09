@@ -216,7 +216,7 @@ def test_store_tops_up_a_cache_a_session_short(tmp_path, monkeypatch):
     store._write_attempts({"VENUSPIPES.NS": _time.time() - 60})
     calls = []
 
-    def fake(tickers, start, end):
+    def fake(tickers, start, end, threads=True):
         calls.append((tuple(tickers), pd.Timestamp(start)))
         return {"VENUSPIPES.NS": pd.DataFrame(
             {"Close": [2238.5, 2119.8], "AdjFactor": [1.0, 1.0]},
@@ -230,3 +230,27 @@ def test_store_tops_up_a_cache_a_session_short(tmp_path, monkeypatch):
     # and not again within the top-up window
     store.get(["VENUSPIPES"], "2026-01-01", "2026-10-09")
     assert len(calls) == 1
+
+
+def test_fill_from_quotes_puts_prev_close_on_the_missing_session():
+    now = datetime(2026, 10, 9, 13, 0)                     # Friday, market open
+    close = pd.DataFrame({"VENUSPIPES": [2238.5, np.nan], "PEER": [10.0, 11.0]},
+                         index=pd.to_datetime(["2026-10-07", "2026-10-08"]))
+    q = pd.DataFrame({"prev_close": [2119.8], "price": [2063.9],
+                      "session": [pd.Timestamp("2026-10-09")]}, index=["VENUSPIPES"])
+    out, filled = data_mod.fill_from_quotes(close, q, now)
+    assert filled == ["VENUSPIPES"]
+    assert out.loc["2026-10-08", "VENUSPIPES"] == 2119.8
+    assert out.loc["2026-10-07", "VENUSPIPES"] == 2238.5       # what Yahoo sent stays
+    assert "2026-10-09" not in out.index.strftime("%Y-%m-%d")   # today is still live
+
+
+def test_fill_from_quotes_never_overwrites_and_adds_a_settled_session():
+    now = datetime(2026, 10, 9, 17, 0)                     # after the close
+    close = pd.DataFrame({"A": [100.0, 101.0]}, index=pd.to_datetime(["2026-10-07", "2026-10-08"]))
+    q = pd.DataFrame({"prev_close": [999.0], "price": [103.0],
+                      "session": [pd.Timestamp("2026-10-09")]}, index=["A"])
+    out, filled = data_mod.fill_from_quotes(close, q, now)
+    assert out.loc["2026-10-08", "A"] == 101.0                  # not overwritten
+    assert out.loc["2026-10-09", "A"] == 103.0
+    assert filled == ["A"]
