@@ -1,6 +1,7 @@
 """Dates, sessions and the journal's equity curve — the "Today P&L" class of bugs."""
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -192,3 +193,40 @@ def test_below_fast_ema_watch():
     # an EMA on a pre-split scale (> 1.8x CMP) is ignored
     w2 = jn.below_fast_ema(b, pd.Series({"A": 50.0}), pd.Series({"A": 100.0}))
     assert w2.empty
+
+
+def test_lagging_symbols_names_the_stale_ones(monkeypatch):
+    monkeypatch.setattr(data_mod, "now_ist", lambda: datetime(2026, 10, 9, 13, 0))
+    close = pd.DataFrame({"A": [1.0, np.nan], "B": [1.0, 1.0]},
+                         index=pd.to_datetime(["2026-10-07", "2026-10-08"]))
+    lag = data_mod.lagging_symbols(close, pd.Timestamp("2026-10-09"))
+    assert lag == {"A": pd.Timestamp("2026-10-07")}
+
+
+def test_store_tops_up_a_cache_a_session_short(tmp_path, monkeypatch):
+    """A refresh that failed (rate limit) left the cache at Wednesday and the
+    three-hour retry throttle kept it there; the top-up fetches Thursday."""
+    import time as _time
+    monkeypatch.setattr(data_mod, "now_ist", lambda: datetime(2026, 10, 9, 13, 0))
+    store = data_mod.PriceStore(cache_dir=str(tmp_path))
+    idx = pd.bdate_range("2024-01-01", "2026-10-07")
+    old = pd.DataFrame({"Close": 100.0, "AdjFactor": 1.0}, index=idx)
+    store._write_cache("VENUSPIPES.NS", old)
+    # main refresh was tried a minute ago, so the throttle serves the stale cache
+    store._write_attempts({"VENUSPIPES.NS": _time.time() - 60})
+    calls = []
+
+    def fake(tickers, start, end):
+        calls.append((tuple(tickers), pd.Timestamp(start)))
+        return {"VENUSPIPES.NS": pd.DataFrame(
+            {"Close": [2238.5, 2119.8], "AdjFactor": [1.0, 1.0]},
+            index=pd.to_datetime(["2026-10-07", "2026-10-08"]))}
+
+    monkeypatch.setattr(store, "_download_batch", fake)
+    p = store.get(["VENUSPIPES"], "2026-01-01", "2026-10-09")
+    assert p["RawClose"]["VENUSPIPES"].index.max() == pd.Timestamp("2026-10-08")
+    assert p["RawClose"]["VENUSPIPES"].iloc[-1] == 2119.8
+    assert len(calls) == 1 and calls[0][1] >= pd.Timestamp("2026-09-20")   # a short fetch
+    # and not again within the top-up window
+    store.get(["VENUSPIPES"], "2026-01-01", "2026-10-09")
+    assert len(calls) == 1

@@ -1608,7 +1608,10 @@ def take_action_html(pending: pd.DataFrame, week, watch: pd.DataFrame | None = N
 # --------------------------------------------------------------------------- #
 # data
 # --------------------------------------------------------------------------- #
-@st.cache_data(show_spinner=False, ttl=60 * 60)
+# 15 minutes, not an hour: the disk cache makes a reload cheap, and a panel
+# that came back a session short (Yahoo refused part of a refresh) must not be
+# served for an hour after the store has already caught up.
+@st.cache_data(show_spinner=False, ttl=15 * 60)
 def load_panel(symbols: tuple[str, ...], start: str, end: str, demo: bool):
     if demo:
         panel = data_mod.synthetic_panel(list(symbols), start="2016-01-01", end=end)
@@ -4766,6 +4769,18 @@ def tab_positions(s: dict) -> None:
     hist, _hist_sh = load_panel(ever, str(pd.Timestamp(ctx["start"]).date()),
                                 str(pd.Timestamp(ctx["end"]).date()), s["demo"])
     raw_hist = hist.get("RawClose", hist.get("Close", pd.DataFrame()))
+    if not s.get("demo") and not raw_hist.empty:
+        held_cols = [c for c in open_syms if c in raw_hist.columns]
+        lag = data_mod.lagging_symbols(raw_hist[held_cols], ctx["end"])
+        if lag:
+            when = sorted({d.strftime("%d %b") for d in lag.values()})
+            st.warning(
+                f"**Yahoo has not sent the latest close for {len(lag)} holding(s)** — "
+                + ", ".join(sorted(lag)[:12]) + (" …" if len(lag) > 12 else "")
+                + f" (history ends {', '.join(when)}). Their CMP is live and correct, so "
+                "Unrealised P&L and Open Risk are right; **Today P&L** for them spans more "
+                "than one day, and they are left out of today's gainers / losers. The app "
+                "retries every 15 minutes.")
     close_m = data_mod.apply_live_mark(raw_hist, live, live_date)
     eq_pos = js.equity_curve(book, close_m)
     td = js.window_pnl(eq_pos, 1)

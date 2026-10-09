@@ -23,15 +23,22 @@ COLUMNS = ["Stock", "Prev close", "CMP", "Day %", "Day P&L"]
 
 
 def prev_close_before(close: pd.DataFrame, session: pd.Timestamp) -> pd.Series:
-    """Each symbol's last close strictly before `session`."""
+    """Each symbol's close on the last session before `session`.
+
+    Only a close dated on THAT session counts. A symbol whose history stops a
+    day earlier (Yahoo did not send the latest bar) is left out rather than
+    carried forward: carried forward, its two-day fall showed up as one day's
+    move — VENUSPIPES −7.8% on a −2.6% day. Left out, it is listed as "no
+    previous close" and the caller says so.
+    """
     if close is None or close.empty:
         return pd.Series(dtype=float)
     px = close.apply(pd.to_numeric, errors="coerce").sort_index()
     idx = pd.DatetimeIndex(px.index).normalize()
-    before = px[idx < pd.Timestamp(session).normalize()]
+    before = px[idx < pd.Timestamp(session).normalize()].dropna(how="all")
     if before.empty:
         return pd.Series(dtype=float)
-    return before.ffill().iloc[-1].dropna()
+    return before.iloc[-1].dropna()
 
 
 def day_moves(
