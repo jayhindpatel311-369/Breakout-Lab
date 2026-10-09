@@ -172,6 +172,23 @@ def live_last_prices(symbols: list[str], with_date: bool = False):
     return prices, (max(days) if days else None)
 
 
+def lagging_symbols(close: pd.DataFrame, end=None, now: datetime | None = None) -> dict:
+    """{symbol: its last close date} for every column whose history stops
+    before the last settled session — the ones whose previous close is old."""
+    if close is None or close.empty:
+        return {}
+    exp = PriceStore.expected_last_bar(pd.Timestamp(end) if end is not None
+                                       else pd.Timestamp((now or now_ist()).date()), now)
+    out = {}
+    for c in close.columns:
+        s = pd.to_numeric(close[c], errors="coerce").dropna()
+        if len(s):
+            last = pd.Timestamp(s.index.max()).normalize()
+            if last < exp:
+                out[c] = last
+    return out
+
+
 def _ist_day(ts) -> pd.Timestamp | None:
     """The IST calendar day of a (possibly tz-aware) intraday timestamp."""
     try:
@@ -361,6 +378,9 @@ class PriceStore:
     # again. Without it a holiday — which never grows a bar — would re-download
     # every symbol on every rerun.
     RETRY_AFTER_SECONDS = 3 * 60 * 60
+    # A symbol still a session or more behind after the main refresh is topped
+    # up with a few days of bars, retried on this much shorter clock.
+    TOPUP_RETRY_SECONDS = 15 * 60
 
     @staticmethod
     def expected_last_bar(end: pd.Timestamp, now: datetime | None = None) -> pd.Timestamp:
@@ -386,6 +406,34 @@ class PriceStore:
         # EMA lagged with it. A cache is complete only when it holds the last
         # settled session.
         return pd.Timestamp(cached.index.max()).normalize() < self.expected_last_bar(end)
+
+    def _top_up(self, tickers, frames, end, attempts, now_ts, batch_size) -> None:
+        exp = self.expected_last_bar(end)
+        lagging = [
+            t for t in dict.fromkeys(tickers)
+            if t in frames and frames[t] is not None and len(frames[t])
+            and pd.Timestamp(frames[t].index.max()).normalize() < exp
+            and now_ts - attempts.get("recent:" + t, 0.0) >= self.TOPUP_RETRY_SECONDS
+        ]
+        if not lagging:
+            return
+        for i in range(0, len(lagging), batch_size):
+            chunk = lagging[i : i + batch_size]
+            since = min(pd.Timestamp(frames[t].index.max()) for t in chunk) - pd.Timedelta(days=10)
+            try:
+                got = self._download_batch(chunk, since, end)
+            except Exception:
+                got = {}
+            for t in chunk:
+                attempts["recent:" + t] = now_ts
+            for t, df in got.items():
+                df = drop_unsettled(df)
+                if df is None or df.empty:
+                    continue
+                merged = _merge(self._read_cache(t), df)
+                self._write_cache(t, merged)
+                frames[t] = merged
+        self._write_attempts(attempts)
 
     def _attempts_path(self) -> str:
         return os.path.join(self.cache_dir, "meta", "refresh_attempts.json")
@@ -520,6 +568,16 @@ class PriceStore:
                     frames[t] = old
         if to_fetch and not self.offline:
             self._write_attempts(attempts)
+
+        # -------- top up anything still a session or more behind ---------- #
+        # A refresh that fails part-way (Yahoo rate-limits a shared host such
+        # as Streamlit Cloud) used to fall back to the stale cache silently and
+        # then not retry for three hours. Previous close was then two sessions
+        # old: the day's move read −7.8% where the stock was −2.6%, and Today
+        # P&L carried two days. A short, recent download is far more likely to
+        # get through, and it is retried every few minutes until it does.
+        if not self.offline:
+            self._top_up(tickers, frames, end, attempts, now_ts, batch_size)
 
         # -------- assemble wide frames, keyed by the ORIGINAL symbol --------- #
         panel: dict[str, dict[str, pd.Series]] = {f: {} for f in FIELDS}

@@ -60,3 +60,14 @@ def test_empty_inputs():
     up, down = top_movers(moves)
     assert up.empty and down.empty and missing == []
     assert prev_close_before(pd.DataFrame(), pd.Timestamp("2026-10-05")).empty
+
+
+def test_symbol_a_session_behind_is_left_out_not_carried_forward():
+    # Yahoo sent Thursday's bar for B but not for A: A's "previous close" would
+    # be Wednesday's, and its two-day fall would read as today's move
+    close = _close({"A": [2238.5, np.nan], "B": [100.0, 101.0]}, ["2026-10-07", "2026-10-08"])
+    prev = prev_close_before(close, pd.Timestamp("2026-10-09"))
+    assert "A" not in prev.index
+    assert prev["B"] == 101.0
+    moves, missing = day_moves(["A", "B"], pd.Series({"A": 2064.5, "B": 102.0}), prev)
+    assert missing == ["A"]
