@@ -254,3 +254,10 @@ def test_fill_from_quotes_never_overwrites_and_adds_a_settled_session():
     assert out.loc["2026-10-08", "A"] == 101.0                  # not overwritten
     assert out.loc["2026-10-09", "A"] == 103.0
     assert filled == ["A"]
+
+
+def test_quote_session_reads_both_forms():
+    ts = pd.Timestamp("2026-10-09 13:45", tz="Asia/Kolkata")
+    assert data_mod._quote_session(ts) == pd.Timestamp("2026-10-09")       # what yfinance gives
+    assert data_mod._quote_session(int(ts.timestamp())) == pd.Timestamp("2026-10-09")
+    assert data_mod._quote_session(None) is None

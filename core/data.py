@@ -197,9 +197,7 @@ def quote_prev_closes(symbols: list[str], pause: float = 0.25) -> pd.DataFrame:
             md = tk.get_history_metadata() or {}
             prev = md.get("previousClose") or md.get("chartPreviousClose")
             price = md.get("regularMarketPrice")
-            t = md.get("regularMarketTime")
-            if t:
-                sess = _ist_day(pd.Timestamp(int(t), unit="s", tz="UTC"))
+            sess = _quote_session(md.get("regularMarketTime"))
             if prev is None:
                 info = tk.info or {}
                 prev = info.get("regularMarketPreviousClose") or info.get("previousClose")
@@ -217,6 +215,24 @@ def quote_prev_closes(symbols: list[str], pause: float = 0.25) -> pd.DataFrame:
             time.sleep(pause)
     return pd.DataFrame.from_dict(rows, orient="index",
                                   columns=["prev_close", "price", "session"])
+
+
+def _quote_session(t) -> pd.Timestamp | None:
+    """IST trading day of a quote's regularMarketTime.
+
+    yfinance hands it back already converted to a tz-aware Timestamp; the raw
+    Yahoo field is epoch seconds. Reading only the second form (int(t)) threw
+    on the first, the session came back empty, and not one missing close was
+    ever filled.
+    """
+    if t is None:
+        return None
+    try:
+        if isinstance(t, (int, float, np.integer, np.floating)):
+            t = pd.Timestamp(int(t), unit="s", tz="UTC")
+        return _ist_day(pd.Timestamp(t))
+    except Exception:
+        return None
 
 
 def fill_from_quotes(close: pd.DataFrame, quotes: pd.DataFrame,

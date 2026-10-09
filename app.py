@@ -4871,7 +4871,11 @@ def tab_positions(s: dict) -> None:
     watch = jn.below_fast_ema(book, last_px, ef,
                               skip=set(_stops["symbol"]) if len(_stops) else set())
     # what moved today first, then what to do about the week
-    movers_ui(book, panel, live, live_date, nse_prev)
+    # Movers read the raw daily closes (gaps left as gaps, quote-filled where
+    # Yahoo's history was short) — not the aligned panel, which forward-fills a
+    # missing day and so handed VENUSPIPES Wednesday's close as "previous".
+    movers_ui(book, {"RawClose": raw_hist} if not raw_hist.empty else panel,
+              live, live_date, nse_prev)
     st.markdown(take_action_html(pending, week, watch), unsafe_allow_html=True)
 
     wl = js.winners_losers(d["detail"])
