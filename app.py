@@ -1608,6 +1608,11 @@ def take_action_html(pending: pd.DataFrame, week, watch: pd.DataFrame | None = N
 # --------------------------------------------------------------------------- #
 # data
 # --------------------------------------------------------------------------- #
+@st.cache_data(show_spinner=False, ttl=10 * 60)
+def load_quote_prev(symbols: tuple[str, ...]) -> pd.DataFrame:
+    return data_mod.quote_prev_closes(list(symbols))
+
+
 # 15 minutes, not an hour: the disk cache makes a reload cheap, and a panel
 # that came back a session short (Yahoo refused part of a refresh) must not be
 # served for an hour after the store has already caught up.
@@ -4773,14 +4778,31 @@ def tab_positions(s: dict) -> None:
         held_cols = [c for c in open_syms if c in raw_hist.columns]
         lag = data_mod.lagging_symbols(raw_hist[held_cols], ctx["end"])
         if lag:
+            # Yahoo's daily bars came back a session short for these, while its
+            # quote — what the website shows as Previous Close — still has it.
+            with st.spinner(f"Fetching Yahoo's previous close for {len(lag)} stock(s)…"):
+                quotes = load_quote_prev(tuple(sorted(lag)))
+            raw_hist, _f1 = data_mod.fill_from_quotes(raw_hist, quotes)
+            if "RawClose" in panel:
+                panel = dict(panel)
+                panel["RawClose"], _f2 = data_mod.fill_from_quotes(panel["RawClose"], quotes)
+            lag = data_mod.lagging_symbols(raw_hist[held_cols], ctx["end"])
+            if _f1:
+                st.caption(f"Previous close for {len(_f1)} holding(s) taken from Yahoo's quote "
+                           "(its daily history was a session short): " + ", ".join(sorted(_f1)))
+        if lag:
             when = sorted({d.strftime("%d %b") for d in lag.values()})
+            errs = data_mod.last_refresh_errors()
+            why = sorted({v for k, v in errs.items()
+                          if data_mod.from_yahoo(k) in lag})[:2]
             st.warning(
                 f"**Yahoo has not sent the latest close for {len(lag)} holding(s)** — "
                 + ", ".join(sorted(lag)[:12]) + (" …" if len(lag) > 12 else "")
                 + f" (history ends {', '.join(when)}). Their CMP is live and correct, so "
                 "Unrealised P&L and Open Risk are right; **Today P&L** for them spans more "
                 "than one day, and they are left out of today's gainers / losers. The app "
-                "retries every 15 minutes.")
+                "retries every 15 minutes."
+                + (f" Yahoo said: *{'; '.join(why)}*" if why else ""))
     close_m = data_mod.apply_live_mark(raw_hist, live, live_date)
     eq_pos = js.equity_curve(book, close_m)
     td = js.window_pnl(eq_pos, 1)

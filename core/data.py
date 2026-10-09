@@ -172,6 +172,103 @@ def live_last_prices(symbols: list[str], with_date: bool = False):
     return prices, (max(days) if days else None)
 
 
+def quote_prev_closes(symbols: list[str], pause: float = 0.25) -> pd.DataFrame:
+    """Previous close straight from Yahoo's quote — the number its website shows.
+
+    For the few symbols whose DAILY history came back a session short. The
+    daily-bar endpoint and the quote are different Yahoo services, and the
+    quote is the one that kept working when the daily bars did not: the same
+    stocks had a live CMP and a "Previous Close" on the website while their
+    history stopped a day early. One gentle request per symbol, in sequence.
+
+    Returns a frame indexed by symbol: prev_close, price, session (IST date of
+    the quote's last trade). Symbols Yahoo would not quote are simply absent.
+    """
+    rows = {}
+    if not symbols:
+        return pd.DataFrame(columns=["prev_close", "price", "session"])
+    import yfinance as yf
+
+    for s in symbols:
+        prev = price = sess = None
+        try:
+            tk = yf.Ticker(to_yahoo(s))
+            tk.history(period="1d", interval="5m", auto_adjust=False)
+            md = tk.get_history_metadata() or {}
+            prev = md.get("previousClose") or md.get("chartPreviousClose")
+            price = md.get("regularMarketPrice")
+            t = md.get("regularMarketTime")
+            if t:
+                sess = _ist_day(pd.Timestamp(int(t), unit="s", tz="UTC"))
+            if prev is None:
+                info = tk.info or {}
+                prev = info.get("regularMarketPreviousClose") or info.get("previousClose")
+        except Exception:
+            pass
+        try:
+            prev = float(prev) if prev is not None else None
+        except (TypeError, ValueError):
+            prev = None
+        if prev and prev > 0:
+            rows[s] = {"prev_close": prev,
+                       "price": float(price) if price else np.nan,
+                       "session": sess}
+        if pause:
+            time.sleep(pause)
+    return pd.DataFrame.from_dict(rows, orient="index",
+                                  columns=["prev_close", "price", "session"])
+
+
+def fill_from_quotes(close: pd.DataFrame, quotes: pd.DataFrame,
+                     now: datetime | None = None) -> tuple[pd.DataFrame, list[str]]:
+    """Fill the missing last session(s) of lagging symbols from their quotes.
+
+    The quote's previous close belongs to the trading day before the quote's
+    own session — found from the other symbols' dates, not from a calendar, so
+    holidays need no list. If the quote's session itself has settled (after
+    16:00 IST, or a later day), its price is that session's close. Only empty
+    cells after a symbol's own history are filled; nothing Yahoo did send is
+    overwritten.
+    """
+    if close is None or close.empty or quotes is None or quotes.empty:
+        return close, []
+    out = close.copy()
+    out.index = pd.DatetimeIndex(out.index).normalize()
+    filled = []
+    for sym, q in quotes.iterrows():
+        if sym not in out.columns or q.get("session") is None or pd.isna(q.get("session")):
+            continue
+        own = pd.to_numeric(out[sym], errors="coerce").dropna()
+        last_own = own.index.max() if len(own) else pd.Timestamp.min
+        sess = pd.Timestamp(q["session"]).normalize()
+        before = out.index[out.index < sess]
+        did = False
+        if len(before):
+            target = before.max()
+            if target > last_own and np.isfinite(q["prev_close"]):
+                out.loc[target, sym] = float(q["prev_close"])
+                did = True
+        if session_settled(sess, now) and sess > last_own and np.isfinite(q.get("price", np.nan)):
+            if sess not in out.index:
+                out.loc[sess] = np.nan
+                out = out.sort_index()
+            out.loc[sess, sym] = float(q["price"])
+            did = True
+        if did:
+            filled.append(sym)
+    return out, filled
+
+
+def last_refresh_errors(cache_dir: str = None) -> dict:
+    """{ticker: message} from the last Yahoo download that refused some symbols."""
+    p = os.path.join(cache_dir or DEFAULT_CACHE, "meta", "refresh_errors.json")
+    try:
+        with open(p) as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
 def lagging_symbols(close: pd.DataFrame, end=None, now: datetime | None = None) -> dict:
     """{symbol: its last close date} for every column whose history stops
     before the last settled session — the ones whose previous close is old."""
@@ -421,7 +518,7 @@ class PriceStore:
             chunk = lagging[i : i + batch_size]
             since = min(pd.Timestamp(frames[t].index.max()) for t in chunk) - pd.Timedelta(days=10)
             try:
-                got = self._download_batch(chunk, since, end)
+                got = self._download_batch(chunk, since, end, threads=False)
             except Exception:
                 got = {}
             for t in chunk:
@@ -453,7 +550,8 @@ class PriceStore:
             pass
 
     def _download_batch(
-        self, tickers: list[str], start: pd.Timestamp, end: pd.Timestamp
+        self, tickers: list[str], start: pd.Timestamp, end: pd.Timestamp,
+        threads: bool = True,
     ) -> dict[str, pd.DataFrame]:
         """yfinance batch download -> {ticker: OHLCV DataFrame}."""
         import yfinance as yf
@@ -470,9 +568,20 @@ class PriceStore:
             auto_adjust=False,
             actions=False,
             group_by="ticker",
-            threads=True,
+            threads=threads,
             progress=False,
         )
+        try:
+            from yfinance import shared as _yf_shared
+            errs = {str(k): str(v)[:160] for k, v in (_yf_shared._ERRORS or {}).items()}
+        except Exception:
+            errs = {}
+        if errs:
+            try:
+                with open(os.path.join(self.cache_dir, "meta", "refresh_errors.json"), "w") as fh:
+                    json.dump(errs, fh)
+            except Exception:
+                pass
         if raw is None or len(raw) == 0:
             return out
 
